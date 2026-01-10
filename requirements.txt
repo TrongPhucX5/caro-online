@@ -1,0 +1,4 @@
+# Các package cần thiết cho server và client
+# Ví dụ:
+tkinter
+sqlite3
