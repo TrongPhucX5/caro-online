@@ -28,9 +28,17 @@ caro-online/
 └── README.md
 ```
 
-## Hướng dẫn cài đặt
+## ✨ Tính năng
+- 🎯 Bàn cờ 15x15 với win condition 5 thẳng hàng
+- 🌐 Multiplayer real-time qua socket
+- 👤 Đăng nhập/đăng ký người dùng
+- 💬 Chat trong phòng chơi
+- 📊 Leaderboard và thống kê người chơi
+- 🧪 Unit tests và integration tests
 
-1. Cài Python 3.x
-2. Cài các package trong requirements.txt
-3. Chạy server: `python server/main.py`
-4. Chạy client: `python client/main.py`
+## 👥 Thành viên nhóm
+1. **Người 1** - Server & Network
+2. **Người 2** - Game Logic & AI
+3. **Người 3** - GUI & Frontend
+4. **Người 4** - Database & User System
+5. **Người 5** - Testing & DevOps
