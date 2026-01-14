@@ -14,7 +14,7 @@ class CaroDatabase:
     def setup_database(self):
         """Setup database with required tables"""
         try:
-            self.connection = sqlite3.connect(self.db_path)
+            self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
             self.connection.row_factory = sqlite3.Row  # Return rows as dictionaries
             self.create_tables()
             self.add_default_data()
