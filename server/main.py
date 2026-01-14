@@ -188,6 +188,61 @@ class CaroServer:
                 'rooms': room_list
             })
 
+        # --- 5. CHAT (MỚI THÊM) ---
+        elif msg_type == 'CHAT':
+            room_id = client.get('room_id')
+            message_content = message.get('message')
+            
+            if room_id and room_id in self.rooms:
+                room = self.rooms[room_id]
+                # Gửi cho tất cả người khác trong phòng (trừ bản thân mình)
+                for pid in room['players']:
+                    if pid != client_id:
+                        self.send_to_client(pid, {
+                            'type': 'CHAT',
+                            'sender': client['username'],
+                            'message': message_content
+                        })
+
+        # --- 6. GAME CONTROL (MỚI THÊM: ĐẦU HÀNG & CHƠI LẠI) ---
+        elif msg_type == 'SURRENDER':
+            room_id = client.get('room_id')
+            if room_id and room_id in self.rooms:
+                room = self.rooms[room_id]
+                # Người đầu hàng = Người thua -> Người kia thắng
+                opponent_id = None
+                for pid in room['players']:
+                    if pid != client_id:
+                        opponent_id = pid
+                        break
+                
+                if opponent_id:
+                    print(f"🏳️ {client['username']} surrendered!")
+                    # Gọi hàm game over, người thắng là opponent_id
+                    self.handle_game_over(room, winner_id=opponent_id)
+
+        elif msg_type == 'PLAY_AGAIN':
+            room_id = client.get('room_id')
+            if room_id and room_id in self.rooms:
+                room = self.rooms[room_id]
+                # Chỉ chủ phòng (hoặc logic đơn giản là ai bấm cũng được) được reset
+                # Reset bàn cờ mới
+                room['board'] = CaroBoard()
+                room['status'] = 'playing'
+                
+                # Hoán đổi người đi trước (để công bằng)
+                room['players'].reverse() # Đảo vị trí trong list
+                
+                # Gửi thông báo bắt đầu lại
+                player_names = [self.clients[p]['username'] for p in room['players']]
+                for pid in room['players']:
+                    self.send_to_client(pid, {
+                        'type': 'ROOM_JOINED', # Tái sử dụng message này để client reset bàn cờ
+                        'room_id': room_id,
+                        'players': player_names
+                    })
+                print(f"🔄 Room {room_id} restarted!")
+
     def handle_game_over(self, room, winner_id):
         room['status'] = 'finished'
         winner_name = self.clients[winner_id]['username'] if winner_id else 'Draw'

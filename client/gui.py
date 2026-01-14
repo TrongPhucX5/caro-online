@@ -58,7 +58,10 @@ class CaroClient:
             players = message.get('players', [])
             self.game_active = True
             
-            # Setup biểu tượng
+            # Reset bàn cờ về trắng tinh
+            self.draw_board()  # <--- QUAN TRỌNG: Xóa X/O cũ đi
+            
+            # Logic xác định quân X/O (giữ nguyên)
             if self.username == players[0]:
                 self.player_symbol = 'X'
             else:
@@ -67,7 +70,7 @@ class CaroClient:
             self.player_label.config(text=f"{self.player_symbol} (You)")
             self.game_status.config(text="Game Started!")
             self.show_frame('game')
-            # self.add_chat_message("System", f"Joined {self.current_room}. Players: {', '.join(players)}")
+            self.add_chat_message("System", f"Game Started! Players: {', '.join(players)}")
 
         elif msg_type == 'OPPONENT_MOVE':
             x, y = message.get('x'), message.get('y')
@@ -88,14 +91,22 @@ class CaroClient:
             else:
                 messagebox.showinfo("Defeat", "💀 You Lost!")
             
-            self.show_frame('lobby')
-            self.refresh_rooms() # Cập nhật lại trạng thái phòng
+            # Don't go to lobby, wait for rematch option
+            # self.show_frame('lobby')
+            # self.refresh_rooms() # Cập nhật lại trạng thái phòng
 
         elif msg_type == 'OPPONENT_LEFT':
             self.game_active = False
             messagebox.showinfo("Info", "Opponent disconnected!")
             self.show_frame('lobby')
             self.refresh_rooms()
+
+        # --- THÊM ĐOẠN NÀY VÀO ---
+        elif msg_type == 'CHAT':
+            sender = message.get('sender')
+            msg = message.get('message')
+            self.add_chat_message(sender, msg)
+        # -------------------------
 
         elif msg_type == 'ERROR':
             messagebox.showerror("Error", message.get('message'))
@@ -167,33 +178,59 @@ class CaroClient:
 
     def setup_game_frame(self):
         self.game_frame = tk.Frame(self.window, bg='gray')
-        
+        self.game_frame.pack(fill=tk.BOTH, expand=True) # Pack it initially
+
         # Top Bar
         top = tk.Frame(self.game_frame, bg='#333')
-        top.pack(fill=tk.X)
+        top.pack(fill=tk.X, side=tk.TOP)
         
         self.game_status = tk.Label(top, text="Waiting...", fg='white', bg='#333', font=("Arial", 14))
         self.game_status.pack(pady=10)
         
+        # Main content area (Board + Chat/Info)
+        main_area = tk.Frame(self.game_frame, bg='gray')
+        main_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
         # Board Area
-        center = tk.Frame(self.game_frame)
-        center.pack()
-        
         px = self.board_size * self.cell_size
-        self.canvas = tk.Canvas(center, width=px, height=px, bg='#fff8e1') # Màu bàn cờ dịu mắt hơn
-        self.canvas.pack(padx=20, pady=20)
+        self.canvas = tk.Canvas(main_area, width=px, height=px, bg='#fff8e1')
+        self.canvas.pack(side=tk.LEFT, padx=(0, 20))
         self.canvas.bind("<Button-1>", self.on_board_click)
         
+        # Right Panel (Info + Chat)
+        right_panel = tk.Frame(main_area, bg='gray')
+        right_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Info section
+        info_frame = tk.LabelFrame(right_panel, text="Info", padx=10, pady=10, bg='gray', fg='white')
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+        self.player_label = tk.Label(info_frame, text="You: ?", bg='gray', fg='white', font=("Arial", 12, "bold"))
+        self.player_label.pack()
+        
+        # Chat section
+        chat_frame = tk.LabelFrame(right_panel, text="Chat", padx=10, pady=10, bg='gray', fg='white')
+        chat_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.chat_display = tk.Text(chat_frame, height=15, state=tk.DISABLED, bg='#555', fg='white', wrap=tk.WORD)
+        self.chat_display.pack(fill=tk.BOTH, expand=True)
+        
+        chat_input_frame = tk.Frame(chat_frame, bg='gray')
+        chat_input_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        self.chat_input = tk.Entry(chat_input_frame)
+        self.chat_input.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self.chat_input.bind("<Return>", self.send_chat)
+        
+        tk.Button(chat_input_frame, text="Send", command=self.send_chat).pack(side=tk.RIGHT, padx=(5,0))
+
         # Bottom Controls
         bottom = tk.Frame(self.game_frame, bg='gray')
-        bottom.pack(fill=tk.X, padx=20, pady=10)
-        
+        bottom.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=10)
         tk.Button(bottom, text="Quit Game", command=self.leave_game, bg='#f44336', fg='white').pack(side=tk.RIGHT)
-        
-        info = tk.Frame(bottom, bg='gray')
-        info.pack(side=tk.LEFT)
-        self.player_label = tk.Label(info, text="You: ?", bg='gray', fg='white', font=("Arial", 12, "bold"))
-        self.player_label.pack(anchor='w')
+        tk.Button(bottom, text="Surrender", command=self.surrender, bg='#FFC107', fg='black').pack(side=tk.RIGHT, padx=5)
+        tk.Button(bottom, text="New Game", command=self.request_new_game, bg='#4CAF50', fg='white').pack(side=tk.RIGHT, padx=5)
+
+        self.game_frame.pack_forget() # Hide it initially
 
     # --- LOGIC ---
     def login(self):
@@ -201,6 +238,47 @@ class CaroClient:
         p = self.password_entry.get().strip()
         if u and self.network.connect():
             self.network.send({'type': 'LOGIN', 'username': u, 'password': p})
+
+    def add_chat_message(self, sender, message):
+        """Helper to add message to chat display"""
+        self.chat_display.config(state=tk.NORMAL)
+        self.chat_display.insert(tk.END, f"{sender}: {message}\n")
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END) # Auto-scroll to bottom
+
+    def send_chat(self, event=None):
+        msg = self.chat_input.get().strip()
+        if msg:
+            # 1. Hiển thị tin nhắn của mình ngay lập tức
+            self.add_chat_message("You", msg)
+            self.chat_input.delete(0, tk.END)
+            
+            # 2. Gửi lên Server
+            self.network.send({
+                'type': 'CHAT',
+                'message': msg,
+                'room_id': self.current_room
+            })
+
+    def surrender(self):
+        """Xin đầu hàng"""
+        if not self.game_active:
+            return
+            
+        if messagebox.askyesno("Surrender", "Bạn có chắc muốn đầu hàng không?"):
+            self.network.send({
+                'type': 'SURRENDER',
+                'room_id': self.current_room
+            })
+
+    def request_new_game(self):
+        """Yêu cầu chơi ván mới"""
+        # Chỉ cho phép bấm khi game đã kết thúc hoặc muốn reset
+        if messagebox.askyesno("Rematch", "Chơi ván mới nhé?"):
+            self.network.send({
+                'type': 'PLAY_AGAIN',
+                'room_id': self.current_room
+            })
 
     def refresh_rooms(self):
         """Gửi yêu cầu lấy danh sách phòng"""
