@@ -50,10 +50,6 @@ class CaroBoard:
         if self.board[y][x] != 0:
             return False
 
-        # Check correct player turn
-        if player != self.current_player:
-            return False
-
         return True
 
     def check_win(self, x, y, player):
