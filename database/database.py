@@ -34,6 +34,7 @@ class CaroDatabase:
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             email TEXT,
+            display_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_login TIMESTAMP,
             total_games INTEGER DEFAULT 0,
@@ -207,6 +208,100 @@ class CaroDatabase:
                 
         except Exception as e:
             return False, f"Authentication error: {str(e)}"
+        
+    # Thêm các phương thức này vào class CaroDatabase (sau phương thức authenticate_user)
+
+    def get_user_info(self, user_id):
+        """Get basic user info"""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute('''
+            SELECT id, username, display_name, score, total_games, wins, losses, draws
+            FROM users 
+            WHERE id = ?
+            ''', (user_id,))
+            
+            user_data = cursor.fetchone()
+            if user_data:
+                return dict(user_data)
+            return None
+        except Exception as e:
+            print(f"❌ Failed to get user info: {e}")
+            return None
+
+    def update_user_profile(self, user_id, display_name=None, new_password=None):
+        """Update user profile"""
+        try:
+            cursor = self.connection.cursor()
+            
+            updates = []
+            params = []
+            
+            if display_name:
+                updates.append("display_name = ?")
+                params.append(display_name)
+            
+            if new_password:
+                password_hash = self._hash_password(new_password)
+                updates.append("password_hash = ?")
+                params.append(password_hash)
+            
+            if not updates:
+                return False
+                
+            params.append(user_id)
+            
+            query = f'''
+            UPDATE users 
+            SET {', '.join(updates)}
+            WHERE id = ?
+            '''
+            
+            cursor.execute(query, params)
+            self.connection.commit()
+            
+            print(f"✅ Updated profile for user ID: {user_id}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Failed to update profile: {e}")
+            return False
+
+    def update_user_score(self, user_id, score_change):
+        """Update user score"""
+        try:
+            cursor = self.connection.cursor()
+            
+            cursor.execute('''
+            UPDATE users 
+            SET score = MAX(score + ?, 0)
+            WHERE id = ?
+            ''', (score_change, user_id))
+            
+            self.connection.commit()
+            return True
+            
+        except Exception as e:
+            print(f"❌ Failed to update score: {e}")
+            return False
+
+    def get_user_by_username(self, username):
+        """Get user by username"""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute('''
+            SELECT id, username, display_name, score, total_games, wins, losses, draws
+            FROM users 
+            WHERE username = ?
+            ''', (username,))
+            
+            user_data = cursor.fetchone()
+            if user_data:
+                return dict(user_data)
+            return None
+        except Exception as e:
+            print(f"❌ Failed to get user by username: {e}")
+            return None
     
     def save_game(self, player1_id, player2_id, moves_data, winner_id=None, board_size=15):
         """Save a completed game to database"""

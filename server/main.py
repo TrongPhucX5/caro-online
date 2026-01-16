@@ -1,4 +1,4 @@
-# server/main.py (BẢN FIX LỖI LOGIN & LOGIC NGÀY 2)
+# server/main.py
 import socket
 import threading
 import json
@@ -11,6 +11,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.database import CaroDatabase
 from shared.board import CaroBoard
+from server.room_manager import RoomManager
+from server.user_manager import UserManager
 
 class CaroServer:
     def __init__(self, host='127.0.0.1', port=5555):
@@ -19,14 +21,22 @@ class CaroServer:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
         # KẾT NỐI DATABASE
-        self.db = CaroDatabase("database/caro.db")
+        self.db = CaroDatabase("../database/caro.db")
         
-        self.clients = {}  # client_id -> {socket, username, user_id, room_id}
-        self.rooms = {}    # room_id -> {players[], board, status}
+        # Khởi tạo managers
+        self.user_manager = UserManager(self.db)
+        self.room_manager = RoomManager()
         
-        self.room_counter = 1
         self.client_counter = 1
         self.running = False
+        
+    @property
+    def clients(self):
+        return self.user_manager.clients
+    
+    @property
+    def rooms(self):
+        return self.room_manager.rooms
         
     def start(self):
         try:
@@ -52,12 +62,7 @@ class CaroServer:
     def handle_client(self, client_socket):
         client_id = self.client_counter
         self.client_counter += 1
-        self.clients[client_id] = {
-            'socket': client_socket,
-            'username': None,
-            'user_id': None,
-            'room_id': None
-        }
+        self.user_manager.add_client(client_id, client_socket)
         
         try:
             while self.running:
@@ -87,204 +92,69 @@ class CaroServer:
 
     def process_message(self, client_id, message):
         msg_type = message.get('type')
-        client = self.clients[client_id]
+        client = self.user_manager.get_client(client_id)
         
-        # --- 1. LOGIN ---
-        if msg_type == 'LOGIN':
-            username = message.get('username')
-            password = message.get('password') 
-            print(f"🔍 Auth request: User={username}, Pass={password}")
-
-            success, result = self.db.authenticate_user(username, password)
-            if success:
-                client['username'] = result['username']
-                client['user_id'] = result['id']
-                self.send_to_client(client_id, {
-                    'type': 'LOGIN_SUCCESS',
-                    'message': f"Welcome back, {result['username']}! (Score: {result['score']})"
-                })
-            else:
-                reg_success, reg_result = self.db.register_user(username, password)
-                if reg_success:
-                    client['username'] = username
-                    client['user_id'] = reg_result['user_id']
-                    self.send_to_client(client_id, {
-                        'type': 'LOGIN_SUCCESS',
-                        'message': "Account created & Logged in!"
-                    })
-                else:
-                    self.send_error(client_id, "Login Failed: Wrong password or Username taken.")
-
-        # --- 2. ROOMS ---
-        elif msg_type == 'CREATE_ROOM':
-            room_id = f"room_{self.room_counter}"
-            self.room_counter += 1
-            self.rooms[room_id] = {
-                'id': room_id,
-                'players': [client_id],
-                'board': CaroBoard(), 
-                'status': 'waiting'
-            }
-            client['room_id'] = room_id
-            self.send_to_client(client_id, {'type': 'ROOM_CREATED', 'room_id': room_id})
-
-        elif msg_type == 'JOIN_ROOM':
-            room_id = message.get('room_id')
-            if room_id in self.rooms:
-                room = self.rooms[room_id]
-                if len(room['players']) < 2:
-                    room['players'].append(client_id)
-                    client['room_id'] = room_id
-                    room['status'] = 'playing'
-                    player_names = [self.clients[p]['username'] for p in room['players']]
-                    for pid in room['players']:
-                        self.send_to_client(pid, {
-                            'type': 'ROOM_JOINED',
-                            'room_id': room_id,
-                            'players': player_names
-                        })
-                else:
-                    self.send_error(client_id, "Room is full")
-            else:
-                self.send_error(client_id, "Room not found")
-
-        # --- 3. GAMEPLAY ---
-        elif msg_type == 'MOVE':
-            room_id = client.get('room_id')
-            if room_id and room_id in self.rooms:
-                room = self.rooms[room_id]
-                board = room['board']
-                try:
-                    p_idx = room['players'].index(client_id)
-                    player_num = p_idx + 1
-                except: return
-                x, y = message.get('x'), message.get('y')
-                success, result = board.make_move(x, y, player_num)
-                if success:
-                    opponent_id = room['players'][1 - p_idx]
-                    self.send_to_client(opponent_id, {
-                        'type': 'OPPONENT_MOVE',
-                        'x': x, 'y': y,
-                        'player': client['username']
-                    })
-                    if result == 'win':
-                        self.handle_game_over(room, winner_id=client_id)
-                    elif result == 'draw':
-                        self.handle_game_over(room, winner_id=None)
-
-        # --- 4. LOBBY (MỚI THÊM) ---
-        elif msg_type == 'GET_ROOMS':
-            # Tạo danh sách phòng để gửi về
-            room_list = []
-            for r_id, r in self.rooms.items():
-                room_list.append({
-                    'id': r_id,
-                    'count': len(r['players']),
-                    'status': r['status']
-                })
-            # Gửi danh sách về cho client
-            self.send_to_client(client_id, {
-                'type': 'ROOM_LIST',
-                'rooms': room_list
-            })
-
-        # --- 5. CHAT (MỚI THÊM) ---
+        if not client:
+            return
+            
+        # Phân loại message để xử lý
+        if msg_type in ['LOGIN', 'EDIT_PROFILE', 'GET_ONLINE_PLAYERS']:
+            self.user_manager.handle_message(client_id, message, self)
+            
+        elif msg_type in ['CREATE_ROOM', 'JOIN_ROOM', 'GET_ROOMS', 'LEAVE_ROOM', 'VIEW_MATCH']:
+            self.room_manager.handle_message(client_id, message, self)
+            
+        elif msg_type in ['MOVE', 'SURRENDER', 'PLAY_AGAIN']:
+            from server.game_logic import GameLogic
+            GameLogic.handle_message(client_id, message, self)
+            
         elif msg_type == 'CHAT':
-            room_id = client.get('room_id')
-            message_content = message.get('message')
+            self.handle_chat_message(client_id, message)
             
-            if room_id and room_id in self.rooms:
-                room = self.rooms[room_id]
-                # Gửi cho tất cả người khác trong phòng (trừ bản thân mình)
-                for pid in room['players']:
-                    if pid != client_id:
-                        self.send_to_client(pid, {
-                            'type': 'CHAT',
-                            'sender': client['username'],
-                            'message': message_content
-                        })
+        else:
+            print(f"Unknown message type: {msg_type}")
 
-        # --- 6. GAME CONTROL (MỚI THÊM: ĐẦU HÀNG & CHƠI LẠI) ---
-        elif msg_type == 'SURRENDER':
-            room_id = client.get('room_id')
-            if room_id and room_id in self.rooms:
-                room = self.rooms[room_id]
-                # Người đầu hàng = Người thua -> Người kia thắng
-                opponent_id = None
-                for pid in room['players']:
-                    if pid != client_id:
-                        opponent_id = pid
-                        break
-                
-                if opponent_id:
-                    print(f"🏳️ {client['username']} surrendered!")
-                    # Gọi hàm game over, người thắng là opponent_id
-                    self.handle_game_over(room, winner_id=opponent_id)
-
-        elif msg_type == 'PLAY_AGAIN':
-            room_id = client.get('room_id')
-            if room_id and room_id in self.rooms:
-                room = self.rooms[room_id]
-                # Chỉ chủ phòng (hoặc logic đơn giản là ai bấm cũng được) được reset
-                # Reset bàn cờ mới
-                room['board'] = CaroBoard()
-                room['status'] = 'playing'
-                
-                # Hoán đổi người đi trước (để công bằng)
-                room['players'].reverse() # Đảo vị trí trong list
-                
-                # Gửi thông báo bắt đầu lại
-                player_names = [self.clients[p]['username'] for p in room['players']]
-                for pid in room['players']:
+    def handle_chat_message(self, client_id, message):
+        """Xử lý tin nhắn chat"""
+        client = self.user_manager.get_client(client_id)
+        if not client:
+            return
+            
+        room_id = client.get('room_id')
+        message_content = message.get('message')
+        
+        if room_id and room_id in self.room_manager.rooms:
+            room = self.room_manager.rooms[room_id]
+            # Gửi cho tất cả người khác trong phòng (trừ bản thân mình)
+            for pid in room['players']:
+                if pid != client_id:
                     self.send_to_client(pid, {
-                        'type': 'ROOM_JOINED', # Tái sử dụng message này để client reset bàn cờ
-                        'room_id': room_id,
-                        'players': player_names
+                        'type': 'CHAT',
+                        'sender': client['username'],
+                        'message': message_content
                     })
-                print(f"🔄 Room {room_id} restarted!")
-
-    def handle_game_over(self, room, winner_id):
-        room['status'] = 'finished'
-        winner_name = self.clients[winner_id]['username'] if winner_id else 'Draw'
-        msg = f"GAME OVER! Winner: {winner_name}"
-
-        for pid in room['players']:
-            self.send_to_client(pid, {
-                'type': 'GAME_OVER',
-                'message': msg,
-                'winner': winner_name
-            })
-            
-        # TODO: Lưu kết quả vào DB (Ngày 4)
 
     def send_to_client(self, client_id, message):
-        if client_id in self.clients:
-            try:
-                self.clients[client_id]['socket'].send(json.dumps(message).encode('utf-8'))
-            except: pass
+        self.user_manager.send_to_client(client_id, message)
 
     def send_error(self, client_id, msg):
         self.send_to_client(client_id, {'type': 'ERROR', 'message': msg})
 
     def disconnect_client(self, client_id):
-        if client_id in self.clients:
-            username = self.clients[client_id].get('username', 'Unknown')
-            room_id = self.clients[client_id].get('room_id')
+        client = self.user_manager.get_client(client_id)
+        if not client:
+            return
             
-            if room_id and room_id in self.rooms:
-                other_players = [p for p in self.rooms[room_id]['players'] if p != client_id]
-                for pid in other_players:
-                    self.send_to_client(pid, {'type': 'OPPONENT_LEFT', 'message': f'{username} disconnected'})
-                
-                if client_id in self.rooms[room_id]['players']:
-                    self.rooms[room_id]['players'].remove(client_id)
-                if not self.rooms[room_id]['players']:
-                    del self.rooms[room_id]
-            
-            try: self.clients[client_id]['socket'].close()
-            except: pass
-            del self.clients[client_id]
-            print(f"👋 {username} disconnected")
+        # Xử lý rời phòng
+        room_id = client.get('room_id')
+        if room_id and room_id in self.room_manager.rooms:
+            self.room_manager.handle_client_disconnect(client_id, room_id, self)
+        
+        # Xóa client khỏi user manager
+        self.user_manager.remove_client(client_id)
+        
+        # Broadcast danh sách online mới
+        self.user_manager.broadcast_online_players(self)
 
 if __name__ == "__main__":
     server = CaroServer()
