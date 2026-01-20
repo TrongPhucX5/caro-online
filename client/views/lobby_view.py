@@ -1,159 +1,176 @@
-# client/views/lobby_view.py
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import messagebox
 from components.header import Header
 from components.room_list import RoomList
 from components.player_list import PlayerList
 
-
 class LobbyView:
     def __init__(self, parent, controller):
         self.controller = controller
-        self.frame = tk.Frame(parent, bg='#f0f0f0')
+        self.parent = parent
         
-        # Components
-        self.header = None
-        self.room_list = None
-        self.player_list = None
+        # Theme màu sắc
+        self.colors = {
+            'bg_main': '#f3f4f6',       
+            'sidebar': '#ffffff',       
+            'primary': '#2563eb',       
+            'success': '#10b981',      
+            'warning': '#f59e0b',       
+            'text_dark': '#1f2937',     
+            'text_gray': '#6b7280',     
+            'border': '#e5e7eb'         
+        }
+        
+        self.frame = tk.Frame(parent, bg=self.colors['bg_main'])
+        
+        # Biến UI
+        self.lbl_display_name = None
+        self.lbl_username = None
         
         self.create_widgets()
-        
+
     def create_widgets(self):
-        """Create lobby interface"""
-        # Header
+        # 1. Header
         self.header = Header(self.frame, self.controller)
-        self.header.pack(fill=tk.X, pady=(0, 10))
+        self.header.pack(fill=tk.X, side=tk.TOP)
         
-        # Function frame
-        func_frame = tk.LabelFrame(self.frame, text="Chức năng", 
-                                   font=("Segoe UI", 11, "bold"),
-                                   bg='#f0f0f0', fg='#1e88e5',
-                                   labelanchor='n')
-        func_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+        # Đường kẻ header
+        tk.Frame(self.frame, bg=self.colors['border'], height=1).pack(fill=tk.X)
+
+        # 2. Main Body
+        main_body = tk.Frame(self.frame, bg=self.colors['bg_main'])
+        main_body.pack(fill=tk.BOTH, expand=True)
+
+        # === CỘT TRÁI (SIDEBAR) ===
+        sidebar = tk.Frame(main_body, bg=self.colors['sidebar'], width=260)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        sidebar.pack_propagate(False)
         
-        # Function buttons
-        tk.Button(func_frame, text="Tìm trận", 
-                  font=("Segoe UI", 10), width=12, height=2,
-                  bg='#1e88e5', fg='white').pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Frame(main_body, bg=self.colors['border'], width=1).pack(side=tk.LEFT, fill=tk.Y)
+
+        # Profile
+        profile_frame = tk.Frame(sidebar, bg=self.colors['sidebar'], pady=30, padx=20)
+        profile_frame.pack(fill=tk.X)
         
-        tk.Button(func_frame, text="Vào xem",
-                  command=self.view_selected_match, 
-                  font=("Segoe UI", 10), width=12, height=2,
-                  bg='#1e88e5', fg='white').pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Label(profile_frame, text="👤", font=("Segoe UI", 45), 
+                 bg=self.colors['sidebar'], fg=self.colors['text_gray']).pack()
+                 
+        self.lbl_display_name = tk.Label(profile_frame, text="Loading...", 
+                                         font=("Segoe UI", 14, "bold"), wraplength=220,
+                                         bg=self.colors['sidebar'], fg=self.colors['text_dark'])
+        self.lbl_display_name.pack(pady=(10, 2))
         
-        tk.Button(func_frame, text="Vào phòng", 
-                  command=self.join_selected_room,
-                  font=("Segoe UI", 10), width=12, height=2,
-                  bg='#1e88e5', fg='white').pack(side=tk.LEFT, padx=5, pady=5)
+        self.lbl_username = tk.Label(profile_frame, text="@username", 
+                                     font=("Segoe UI", 10), 
+                                     bg=self.colors['sidebar'], fg=self.colors['text_gray'])
+        self.lbl_username.pack()
         
-        tk.Button(func_frame, text="Tạo phòng", 
-                  command=self.create_room,
-                  font=("Segoe UI", 10), width=12, height=2,
-                  bg='#43a047', fg='white').pack(side=tk.LEFT, padx=5, pady=5)
+        # Nút Edit Profile
+        tk.Button(profile_frame, text="✏️ Sửa hồ sơ", 
+                 command=lambda: self.controller.show_view('profile'),
+                 font=("Segoe UI", 8), bg="#f3f4f6", fg="black", bd=0, cursor="hand2").pack(pady=5)
+
+        tk.Frame(sidebar, bg=self.colors['border'], height=1).pack(fill=tk.X, padx=20, pady=10)
+
+        # Menu
+        menu_frame = tk.Frame(sidebar, bg=self.colors['sidebar'], padx=15)
+        menu_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.create_sidebar_btn(menu_frame, "⚔️  Tìm trận nhanh", self.colors['primary'], self.quick_match)
+        self.create_sidebar_btn(menu_frame, "➕  Tạo phòng mới", self.colors['success'], self.create_room)
+        self.create_sidebar_btn(menu_frame, "👁️  Vào xem trận", '#6366f1', self.view_selected_match)
+        self.create_sidebar_btn(menu_frame, "🚪  Vào phòng", self.colors['text_dark'], self.join_selected_room)
+
+        # Nút Đăng xuất (Đáy Sidebar)
+        bottom_sidebar = tk.Frame(sidebar, bg=self.colors['sidebar'], padx=15, pady=20)
+        bottom_sidebar.pack(side=tk.BOTTOM, fill=tk.X)
         
-        # Tabs Container
-        tabs_container = tk.Frame(self.frame, bg='#f0f0f0')
-        tabs_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        tk.Button(bottom_sidebar, text="⬅  Đăng xuất", 
+                 command=self.logout_confirm,
+                 bg='#fee2e2', fg='#ef4444', 
+                 font=("Segoe UI", 10, "bold"), relief=tk.FLAT, bd=0, cursor="hand2", height=2).pack(fill=tk.X)
         
-        # Tabs Header
-        tabs_header = tk.Frame(tabs_container, bg='#f0f0f0')
-        tabs_header.pack(fill=tk.X, pady=(0, 5))
+        # Nút Refresh (Trên nút đăng xuất)
+        self.create_sidebar_btn(bottom_sidebar, "🔄  Làm mới", self.colors['warning'], self.refresh_all_data)
+
+
+        # === CỘT PHẢI (NỘI DUNG) ===
+        content_area = tk.Frame(main_body, bg=self.colors['bg_main'], padx=25, pady=25)
+        content_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        tk.Label(content_area, text="Sảnh chờ game", 
+                 font=("Segoe UI", 16, "bold"), 
+                 bg=self.colors['bg_main'], fg=self.colors['text_dark']).pack(anchor='w', pady=(0, 15))
+
+        lists_container = tk.Frame(content_area, bg=self.colors['bg_main'])
+        lists_container.pack(fill=tk.BOTH, expand=True)
+
+        # --- FIX LAYOUT: PACK CỘT PHẢI (PLAYER) TRƯỚC ---
+        player_wrapper = tk.Frame(lists_container, bg='white', width=220)
+        player_wrapper.config(highlightbackground=self.colors['border'], highlightthickness=1)
+        player_wrapper.pack(side=tk.RIGHT, fill=tk.Y)
+        player_wrapper.pack_propagate(False) # Cố định size
         
-        tk.Label(tabs_header, text="Danh sách phòng", 
-                 font=("Segoe UI", 12, "bold"),
-                 bg='#f0f0f0').pack(side=tk.LEFT)
+        tk.Label(player_wrapper, text="  Người chơi online", font=("Segoe UI", 10, "bold"), 
+                 bg="#f9fafb", fg=self.colors['text_dark'], anchor='w', height=2).pack(fill=tk.X)
+        tk.Frame(player_wrapper, bg=self.colors['border'], height=1).pack(fill=tk.X)
         
-        tk.Label(tabs_header, text="Người chơi", 
-                 font=("Segoe UI", 12, "bold"),
-                 bg='#f0f0f0').pack(side=tk.LEFT, padx=30)
+        self.player_list = PlayerList(player_wrapper, self.controller)
+        self.player_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # --- SAU ĐÓ MỚI PACK CỘT TRÁI (ROOM) ---
+        room_wrapper = tk.Frame(lists_container, bg='white')
+        room_wrapper.config(highlightbackground=self.colors['border'], highlightthickness=1)
+        room_wrapper.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15))
         
-        # Main Content Frame
-        content_frame = tk.Frame(tabs_container, bg='white', relief=tk.GROOVE, bd=1)
-        content_frame.pack(fill=tk.BOTH, expand=True)
+        tk.Label(room_wrapper, text="  Danh sách phòng", font=("Segoe UI", 10, "bold"), 
+                 bg="#f9fafb", fg=self.colors['text_dark'], anchor='w', height=2).pack(fill=tk.X)
+        tk.Frame(room_wrapper, bg=self.colors['border'], height=1).pack(fill=tk.X)
         
-        # Room List (Left)
-        room_container = tk.Frame(content_frame, bg='white')
-        room_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 5), pady=10)
-        
-        self.room_list = RoomList(room_container, self.controller)
-        self.room_list.pack(fill=tk.BOTH, expand=True)
-        
-        # Player List (Right)
-        player_container = tk.Frame(content_frame, bg='white', relief=tk.GROOVE, bd=1)
-        player_container.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(5, 10), pady=10, ipadx=10)
-        
-        self.player_list = PlayerList(player_container, self.controller)
-        self.player_list.pack(fill=tk.BOTH, expand=True)
-        
-        # Bottom Controls
-        bottom_frame = tk.Frame(self.frame, bg='#f0f0f0')
-        bottom_frame.pack(fill=tk.X, padx=20, pady=10)
-        
-        tk.Button(bottom_frame, text="Vào phòng", 
-                  command=self.join_selected_room,
-                  bg='#1e88e5', fg='white',
-                  font=("Segoe UI", 10, "bold"),
-                  width=15, height=2).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(bottom_frame, text="Làm mới", 
-                  command=self.refresh_all_data,
-                  bg='#ff9800', fg='white',
-                  font=("Segoe UI", 10, "bold"),
-                  width=15, height=2).pack(side=tk.RIGHT, padx=5)
-        
-        # Refresh button in function frame
-        tk.Button(func_frame, text="🔄 Làm mới", 
-                  command=self.refresh_all_data,
-                  bg='#ff9800', fg='white',
-                  font=("Segoe UI", 10, "bold"),
-                  width=12, height=2).pack(side=tk.RIGHT, padx=5, pady=5)
+        self.room_list = RoomList(room_wrapper, self.controller)
+        self.room_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    # Helper & Actions
+    def create_sidebar_btn(self, parent, text, color, command):
+        tk.Button(parent, text=text, command=command, bg=color, fg='white', 
+                 font=("Segoe UI", 10, "bold"), relief=tk.FLAT, bd=0, cursor="hand2", height=2).pack(fill=tk.X, pady=5)
+
+    def update_user_info(self):
+        d_name = getattr(self.controller, 'display_name', None) or getattr(self.controller, 'username', 'Unknown')
+        user = getattr(self.controller, 'username', 'guest')
+        if self.lbl_display_name: self.lbl_display_name.config(text=d_name)
+        if self.lbl_username: self.lbl_username.config(text=f"@{user}")
+
+    def handle_message(self, message):
+        type = message.get('type')
+        if type == 'ROOM_LIST': self.room_list.update(message.get('rooms', []))
+        elif type == 'ONLINE_PLAYERS': self.player_list.update(message.get('players', []))
+        elif type == 'VIEW_MATCH_INFO':
+            info = f"Phòng: {message.get('room_id')}\nTrạng thái: {message.get('status')}\nNgười chơi: {', '.join(message.get('players', []))}"
+            messagebox.showinfo("Chi tiết", info)
+
+    # Button Commands
+    def quick_match(self):
+        if hasattr(self.controller, 'find_match'): self.controller.find_match()
+        else: messagebox.showinfo("Info", "Chức năng đang phát triển")
+    
+    def logout_confirm(self):
+        if messagebox.askyesno("Đăng xuất", "Bạn chắc chắn muốn thoát?"): self.controller.logout()
         
     def view_selected_match(self):
-        """View selected match"""
-        room_id = self.room_list.get_selected_room()
-        if room_id:
-            self.controller.view_match(room_id)
-        else:
-            messagebox.showwarning("Warning", "Chọn một phòng trước!")
-            
+        rid = self.room_list.get_selected_room()
+        if rid: self.controller.view_match(rid)
+        else: messagebox.showwarning("!", "Chọn phòng trước")
+        
     def join_selected_room(self):
-        """Join selected room"""
-        room_id = self.room_list.get_selected_room()
-        if room_id:
-            self.controller.join_room(room_id)
-        else:
-            messagebox.showwarning("Warning", "Chọn một phòng trước!")
-            
-    def create_room(self):
-        """Create new room"""
-        self.controller.create_room()
+        rid = self.room_list.get_selected_room()
+        if rid: self.controller.join_room(rid)
+        else: messagebox.showwarning("!", "Chọn phòng trước")
         
-    def refresh_all_data(self):
-        """Refresh all data"""
-        self.controller.refresh_all_data()
-        
-    def handle_message(self, message):
-        """Handle server messages"""
-        msg_type = message.get('type')
-        
-        if msg_type == 'ROOM_LIST':
-            rooms = message.get('rooms', [])
-            self.room_list.update(rooms)
-            
-        elif msg_type == 'ONLINE_PLAYERS':
-            players = message.get('players', [])
-            self.player_list.update(players)
-            
-        elif msg_type == 'VIEW_MATCH_INFO':
-            room_info = f"Phòng: {message.get('room_id')}\n"
-            room_info += f"Trạng thái: {message.get('status')}\n"
-            room_info += f"Người chơi: {', '.join(message.get('players', []))}"
-            messagebox.showinfo("Thông tin phòng", room_info)
-            
-    def show(self):
-        """Show this view"""
+    def create_room(self): self.controller.create_room()
+    def refresh_all_data(self): self.controller.refresh_all_data()
+    
+    def show(self): 
         self.frame.pack(fill=tk.BOTH, expand=True)
-        
-    def hide(self):
-        """Hide this view"""
-        self.frame.pack_forget()
+        self.update_user_info()
+    def hide(self): self.frame.pack_forget()

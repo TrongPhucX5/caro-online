@@ -167,6 +167,9 @@ class CaroClient:
         self.pending_password = None
         
         self.show_view('lobby')
+        if 'lobby' in self.views:
+            self.views['lobby'].update_user_info()
+        
         self.refresh_all_data()
         
         if hasattr(self.views['profile'], 'load_profile'):
