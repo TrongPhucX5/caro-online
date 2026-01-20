@@ -1,56 +1,35 @@
-# client/components/header.py
 import tkinter as tk
-
 
 class Header:
     def __init__(self, parent, controller):
         self.controller = controller
-        self.frame = tk.Frame(parent, bg='#1e88e5', height=70)
+        # Header nền trắng, có viền dưới nhẹ
+        self.frame = tk.Frame(parent, bg='white', height=60)
         
         self.create_widgets()
         
     def create_widgets(self):
-        """Create header widgets"""
-        # Left side: Title and email
-        left_header = tk.Frame(self.frame, bg='#1e88e5')
-        left_header.pack(side=tk.LEFT, padx=20)
+        """Tạo Header tối giản"""
+        # Container nội dung
+        inner_frame = tk.Frame(self.frame, bg='white')
+        inner_frame.pack(fill=tk.BOTH, expand=True, padx=25, pady=10)
         
+        # Logo / Tên Game (Bên trái)
         tk.Label(
-            left_header, text="Caro Game",
-            bg='#1e88e5', fg='white',
-            font=("Segoe UI", 18, "bold")
-        ).pack(anchor="w")
+            inner_frame, text="CARO ONLINE",
+            bg='white', fg='#2563eb', # Màu xanh chủ đạo
+            font=("Segoe UI", 16, "bold")
+        ).pack(side=tk.LEFT)
         
+        # Slogan hoặc Version (Bên phải)
         tk.Label(
-            left_header, text="lphuc2324@gmail.com",
-            bg='#1e88e5', fg='#e3f2fd',
-            font=("Segoe UI", 10)
-        ).pack(anchor="w")
-        
-        # Right side: Buttons
-        right_header = tk.Frame(self.frame, bg='#1e88e5')
-        right_header.pack(side=tk.RIGHT, padx=20)
-        
-        tk.Button(
-            right_header, text="Đăng xuất", 
-            command=self.controller.logout,
-            bg='#e53935', fg='white', 
-            font=("Segoe UI", 10, "bold"),
-            width=10, height=1
-        ).pack(side=tk.RIGHT, padx=5)
-        
-        tk.Button(
-            right_header, text="Hồ sơ", 
-            command=lambda: self.controller.show_view('profile'),
-            bg='#43a047', fg='white', 
-            font=("Segoe UI", 10, "bold"),
-            width=10, height=1
-        ).pack(side=tk.RIGHT, padx=5)
+            inner_frame, text="v1.0.0 - Stable",
+            bg='white', fg='#9ca3af', # Màu xám nhạt
+            font=("Segoe UI", 9)
+        ).pack(side=tk.RIGHT, anchor='center')
         
     def pack(self, **kwargs):
-        """Pack the header frame"""
         self.frame.pack(**kwargs)
         
     def pack_forget(self):
-        """Hide the header"""
         self.frame.pack_forget()

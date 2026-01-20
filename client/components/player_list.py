@@ -1,46 +1,38 @@
-# client/components/player_list.py
 import tkinter as tk
+from tkinter import ttk
 
-
-class PlayerList:
+class PlayerList(tk.Frame):
     def __init__(self, parent, controller):
+        super().__init__(parent, bg='white')
         self.controller = controller
-        self.frame = tk.Frame(parent, bg='white', relief=tk.GROOVE, bd=1)
-        
-        self.player_listbox = None
         self.create_widgets()
         
     def create_widgets(self):
-        """Create player list widgets"""
-        tk.Label(self.frame, text="Danh sách người chơi online", 
-                 font=("Segoe UI", 11, "bold"), bg='white').pack(pady=10)
+        # Dùng Treeview thay Listbox để đẹp hơn
+        self.tree = ttk.Treeview(self, columns=('name',), show='tree', selectmode='none')
         
-        player_list_frame = tk.Frame(self.frame, bg='white')
-        player_list_frame.pack(fill=tk.BOTH, expand=True)
+        # Cấu hình cột (ẩn header đi cho gọn)
+        self.tree.column('#0', width=0, stretch=tk.NO)
+        self.tree.column('name', anchor='w')
         
-        player_scrollbar = tk.Scrollbar(player_list_frame)
-        player_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscroll=scrollbar.set)
         
-        self.player_listbox = tk.Listbox(
-            player_list_frame,
-            font=("Segoe UI", 10),
-            yscrollcommand=player_scrollbar.set,
-            height=20
-        )
-        self.player_listbox.pack(fill=tk.BOTH, expand=True)
-        player_scrollbar.config(command=self.player_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
     def update(self, players):
-        """Update player list with new data"""
-        self.player_listbox.delete(0, tk.END)
+        """Cập nhật danh sách người chơi"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+            
         for player in players:
+            # Lấy tên hiển thị
             display_name = player.get('display_name', player.get('username', 'Unknown'))
-            self.player_listbox.insert(tk.END, display_name)
+            # Thêm icon xanh (dùng emoji) biểu thị online
+            text = f" 🟢  {display_name}"
+            self.tree.insert('', tk.END, values=(text,))
             
     def pack(self, **kwargs):
-        """Pack the player list frame"""
-        self.frame.pack(**kwargs)
-        
-    def pack_forget(self):
-        """Hide the player list"""
-        self.frame.pack_forget()
+        super().pack(**kwargs)

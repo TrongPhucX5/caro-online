@@ -1,75 +1,89 @@
 import tkinter as tk
 from tkinter import ttk
 
-class RoomList:
-    def __init__(self, parent, app):
-        self.app = app
-        self.frame = tk.Frame(parent, bg='white', relief=tk.GROOVE, bd=1)
+class RoomList(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg='white')
+        self.controller = controller
+        self.setup_style()
+        self.create_widgets()
+
+    def setup_style(self):
+        style = ttk.Style()
+        style.theme_use('clam')
         
-        # Tiêu đề
-        tk.Label(self.frame, text="Danh sách phòng", 
-                 font=("Segoe UI", 12, "bold"),
-                 bg='white').pack(pady=10)
+        style.configure("Treeview.Heading", 
+                        font=("Segoe UI", 10, "bold"), 
+                        background="white", foreground="#4b5563", relief="flat")
         
-        # Bảng phòng
-        table_frame = tk.Frame(self.frame, bg='white')
-        table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        style.configure("Treeview", 
+                        font=("Segoe UI", 10),
+                        rowheight=35,
+                        background="white", fieldbackground="white", relief="flat")
         
-        # Header
-        header_frame = tk.Frame(table_frame, bg='#1e88e5', height=40)
-        header_frame.pack(fill=tk.X)
-        header_frame.pack_propagate(False)
+        style.map("Treeview", background=[('selected', '#eff6ff')], foreground=[('selected', '#1e40af')])
+
+    def create_widgets(self):
+        scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL)
+        # Chú ý: Cột thứ 4 là 'raw_id' dùng để lưu ID gốc nhưng không hiển thị
+        columns = ('display_id', 'name', 'count', 'raw_id')
         
-        tk.Label(header_frame, text="Mã", font=("Segoe UI", 11, "bold"), 
-                 bg='#1e88e5', fg='white', width=15).pack(side=tk.LEFT, padx=5)
-        tk.Label(header_frame, text="Cặp đấu", font=("Segoe UI", 11, "bold"), 
-                 bg='#1e88e5', fg='white', width=25).pack(side=tk.LEFT, padx=5)
-        tk.Label(header_frame, text="Số người", font=("Segoe UI", 11, "bold"), 
-                 bg='#1e88e5', fg='white', width=10).pack(side=tk.LEFT, padx=5)
+        self.tree = ttk.Treeview(self, columns=columns, show='headings', 
+                                 yscrollcommand=scrollbar.set, selectmode='browse')
         
-        # Treeview
-        tree_frame = tk.Frame(table_frame, bg='white')
-        tree_frame.pack(fill=tk.BOTH, expand=True)
+        # Cấu hình hiển thị cột (Cột raw_id để width=0 để ẩn đi)
+        self.tree.column('display_id', width=100, anchor='w')
+        self.tree.column('name', width=230, anchor='w')
+        self.tree.column('count', width=80, anchor='center')
+        self.tree.column('raw_id', width=0, stretch=tk.NO) # <--- ẨN CỘT NÀY
         
-        scrollbar = tk.Scrollbar(tree_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.heading('display_id', text='Phòng', anchor='w')
+        self.tree.heading('name', text='Cặp đấu', anchor='w')
+        self.tree.heading('count', text='Số lượng', anchor='center')
+        self.tree.heading('raw_id', text='') # Không cần tiêu đề cho cột ẩn
         
-        self.tree = ttk.Treeview(
-            tree_frame, 
-            columns=("id", "match", "count"),
-            show="tree",
-            yscrollcommand=scrollbar.set,
-            height=10
-        )
-        
-        self.tree.heading("#0", text="")
-        self.tree.column("#0", width=0, stretch=False)
-        self.tree.heading("id", text="Mã")
-        self.tree.heading("match", text="Cặp đấu")
-        self.tree.heading("count", text="Số người")
-        
-        self.tree.column("id", width=150, anchor=tk.CENTER)
-        self.tree.column("match", width=250, anchor=tk.W)
-        self.tree.column("count", width=100, anchor=tk.CENTER)
-        
-        self.tree.pack(fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.tree.yview)
-    
-    def update(self, rooms):
-        for i in self.tree.get_children():
-            self.tree.delete(i)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
+        self.tree.bind('<Double-1>', self.on_double_click)
+
+    def update(self, rooms):
+        # 1. Xóa sạch dữ liệu cũ trên giao diện
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+            
+        # 2. Thêm dữ liệu mới từ Server
         for room in rooms:
-            r_id = room['id']
-            count = f"{room['count']}/2"
-            match_text = room.get('match_text', 'Chờ đối thủ...')
-            self.tree.insert("", tk.END, values=(r_id, match_text, count))
-    
+            raw_id = room['id']
+            # Logic làm đẹp tên phòng
+            try:
+                room_num = raw_id.split('_')[1]
+                display_id = f"Phòng #{int(room_num):02d}"
+            except:
+                display_id = raw_id
+
+            status_text = f"{room['count']}/2"
+            if room['status'] == 'playing':
+                status_text += " (Đang chơi)"
+            
+            # Chèn vào bảng (Lưu ý thứ tự values khớp với columns khai báo ở trên)
+            self.tree.insert('', tk.END, values=(
+                display_id,           # Cột 1: Tên đẹp
+                room['match_text'],   # Cột 2: Cặp đấu
+                status_text,          # Cột 3: Trạng thái
+                raw_id                # Cột 4 (Ẩn): ID gốc để xử lý logic
+            ))
+
     def get_selected_room(self):
         selected = self.tree.selection()
         if selected:
-            return self.tree.item(selected[0])['values'][0]
+            # Lấy giá trị từ cột ẩn 'raw_id' (index 3)
+            # Đây là cách chuẩn nhất, không cần split chuỗi gì cả
+            return self.tree.item(selected[0])['values'][3]
         return None
-    
-    def pack(self, **kwargs):
-        self.frame.pack(**kwargs)
+
+    def on_double_click(self, event):
+        room_id = self.get_selected_room()
+        if room_id and hasattr(self.controller, 'join_room'):
+            self.controller.join_room(room_id)
