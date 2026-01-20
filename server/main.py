@@ -1,8 +1,6 @@
-# server/main.py
 import socket
 import threading
 import json
-import time
 import sys
 import os
 
@@ -10,7 +8,6 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database.database import CaroDatabase
-from shared.board import CaroBoard
 from server.room_manager import RoomManager
 from server.user_manager import UserManager
 
@@ -73,6 +70,7 @@ class CaroServer:
                     # Xử lý dính gói tin (TCP sticky packets)
                     buffer = data.decode('utf-8')
                     messages = []
+                    # Logic tách gói tin JSON
                     temp = buffer.replace('}{', '}|{')
                     for part in temp.split('|'):
                         messages.append(part)
@@ -97,17 +95,26 @@ class CaroServer:
         if not client:
             return
             
-        # Phân loại message để xử lý
-        if msg_type in ['LOGIN', 'EDIT_PROFILE', 'GET_ONLINE_PLAYERS']:
+        print(f"📩 Recv [{client_id}]: {msg_type}") # Log để debug
+
+        # --- PHÂN LOẠI MESSAGE ---
+        
+        # Nhóm User & Hệ thống
+        # THÊM 'REGISTER' VÀO ĐÂY
+        if msg_type in ['LOGIN', 'REGISTER', 'EDIT_PROFILE', 'GET_ONLINE_PLAYERS']:
             self.user_manager.handle_message(client_id, message, self)
             
-        elif msg_type in ['CREATE_ROOM', 'JOIN_ROOM', 'GET_ROOMS', 'LEAVE_ROOM', 'VIEW_MATCH']:
+        # Nhóm Phòng & Trận đấu
+        # THÊM 'QUICK_MATCH' VÀO ĐÂY
+        elif msg_type in ['CREATE_ROOM', 'JOIN_ROOM', 'GET_ROOMS', 'LEAVE_ROOM', 'VIEW_MATCH', 'QUICK_MATCH']:
             self.room_manager.handle_message(client_id, message, self)
             
+        # Nhóm Gameplay
         elif msg_type in ['MOVE', 'SURRENDER', 'PLAY_AGAIN']:
             from server.game_logic import GameLogic
             GameLogic.handle_message(client_id, message, self)
             
+        # Nhóm Chat
         elif msg_type == 'CHAT':
             self.handle_chat_message(client_id, message)
             
@@ -117,20 +124,21 @@ class CaroServer:
     def handle_chat_message(self, client_id, message):
         """Xử lý tin nhắn chat"""
         client = self.user_manager.get_client(client_id)
-        if not client:
-            return
+        if not client: return
             
         room_id = client.get('room_id')
         message_content = message.get('message')
         
         if room_id and room_id in self.room_manager.rooms:
             room = self.room_manager.rooms[room_id]
-            # Gửi cho tất cả người khác trong phòng (trừ bản thân mình)
+            # Gửi tên hiển thị thay vì username
+            sender_name = client.get('display_name', client['username'])
+            
             for pid in room['players']:
                 if pid != client_id:
                     self.send_to_client(pid, {
                         'type': 'CHAT',
-                        'sender': client['username'],
+                        'sender': sender_name,
                         'message': message_content
                     })
 
@@ -142,10 +150,11 @@ class CaroServer:
 
     def disconnect_client(self, client_id):
         client = self.user_manager.get_client(client_id)
-        if not client:
-            return
+        if not client: return
             
-        # Xử lý rời phòng
+        print(f"❌ Client {client_id} disconnected")
+        
+        # Xử lý rời phòng trước khi xóa client
         room_id = client.get('room_id')
         if room_id and room_id in self.room_manager.rooms:
             self.room_manager.handle_client_disconnect(client_id, room_id, self)

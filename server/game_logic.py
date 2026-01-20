@@ -39,6 +39,7 @@ class GameLogic:
         
         if success:
             opponent_id = room['players'][1 - p_idx]
+            player_name = client.get('display_name', client['username'])
             server.send_to_client(opponent_id, {
                 'type': 'OPPONENT_MOVE',
                 'x': x, 'y': y,
@@ -76,60 +77,83 @@ class GameLogic:
     @staticmethod
     def handle_play_again(client_id, server):
         client = server.user_manager.get_client(client_id)
-        if not client:
-            return
+        if not client: return
             
         room_id = client.get('room_id')
-        if not room_id or room_id not in server.room_manager.rooms:
-            return
+        if not room_id or room_id not in server.room_manager.rooms: return
             
         room = server.room_manager.rooms[room_id]
         
-        # Reset bàn cờ mới
+        # 1. Reset trạng thái phòng
         from shared.board import CaroBoard
         room['board'] = CaroBoard()
         room['status'] = 'playing'
         
-        # Hoán đổi người đi trước (để công bằng)
-        room['players'].reverse() # Đảo vị trí trong list
+        # 2. Hoán đổi vị trí (Người thắng ván trước đi sau, hoặc đổi lượt)
+        room['players'].reverse() 
         
-        # Gửi thông báo bắt đầu lại
-        player_names = [server.user_manager.clients[p]['username'] for p in room['players']]
-        for pid in room['players']:
+        # 3. Lấy tên hiển thị chuẩn để gửi về Client
+        p1_id = room['players'][0]
+        p2_id = room['players'][1]
+        c1 = server.user_manager.get_client(p1_id)
+        c2 = server.user_manager.get_client(p2_id)
+        
+        p1_name = c1.get('display_name', c1['username'])
+        p2_name = c2.get('display_name', c2['username'])
+        
+        # 4. Gửi thông báo start game cho TỪNG người với Symbol cụ thể
+        # Người đầu tiên trong list luôn là X, người thứ 2 là O
+        for i, pid in enumerate(room['players']):
+            symbol = 'X' if i == 0 else 'O'
             server.send_to_client(pid, {
-                'type': 'ROOM_JOINED', # Tái sử dụng message này để client reset bàn cờ
+                'type': 'ROOM_JOINED', 
                 'room_id': room_id,
-                'players': player_names
+                'players': [p1_name, p2_name],
+                'player_symbol': symbol # <--- QUAN TRỌNG: Phải gửi cái này client mới biết ai đánh
             })
-        print(f"🔄 Room {room_id} restarted!")
+            
+        print(f"🔄 Room {room_id} restarted! X: {p1_name}, O: {p2_name}")
         
     @staticmethod
     def handle_game_over(room, winner_id, server):
         room['status'] = 'finished'
-        winner_name = server.user_manager.clients[winner_id]['username'] if winner_id else 'Draw'
         
-        # Cập nhật điểm số trong database
+        # Lấy thông tin người thắng để hiển thị
+        winner_username = 'Draw'
+        winner_display_name = 'Draw'
+        
+        if winner_id:
+            w_client = server.user_manager.get_client(winner_id)
+            if w_client:
+                winner_username = w_client['username']
+                winner_display_name = w_client.get('display_name', w_client['username'])
+        
+        # --- CẬP NHẬT ĐIỂM SỐ (DATABASE) ---
         if winner_id and winner_id in server.user_manager.clients:
+            # Cộng điểm người thắng
             winner_user_id = server.user_manager.clients[winner_id]['user_id']
-            server.db.update_user_score(winner_user_id, 10)  # +10 điểm cho người thắng
+            server.db.update_user_score(winner_user_id, 10)
             
-            # Trừ điểm người thua (nếu không phải hòa)
+            # Trừ điểm người thua
             loser_id = None
             for pid in room['players']:
                 if pid != winner_id:
                     loser_id = pid
                     break
+            
             if loser_id and loser_id in server.user_manager.clients:
                 loser_user_id = server.user_manager.clients[loser_id]['user_id']
-                server.db.update_user_score(loser_user_id, -5)  # -5 điểm cho người thua
+                server.db.update_user_score(loser_user_id, -5)
         
-        # Gửi thông báo kết thúc game
+        # --- GỬI THÔNG BÁO ---
         for pid in room['players']:
             server.send_to_client(pid, {
                 'type': 'GAME_OVER',
-                'message': f"GAME OVER! Winner: {winner_name}",
-                'winner': winner_name if winner_id else 'Draw'
+                # Dùng display_name cho thông báo đẹp
+                'message': f"Kết thúc! Người thắng: {winner_display_name}" if winner_id else "Hòa cờ!",
+                # Dùng username gốc để Client so sánh logic (if winner == my_username)
+                'winner': winner_username if winner_id else 'Draw' 
             })
         
-        # Cập nhật danh sách online players
+        # Cập nhật lại danh sách điểm số ngoài sảnh chờ
         server.user_manager.broadcast_online_players(server)

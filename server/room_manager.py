@@ -1,4 +1,3 @@
-# server/room_manager.py
 import json
 from shared.board import CaroBoard
 
@@ -17,6 +16,11 @@ class RoomManager:
         elif msg_type == 'JOIN_ROOM':
             room_id = message.get('room_id')
             self.join_room(client_id, room_id, server)
+        
+        # --- THÊM: XỬ LÝ TÌM TRẬN NHANH ---
+        elif msg_type == 'QUICK_MATCH':
+            self.quick_match(client_id, server)
+        # ----------------------------------
             
         elif msg_type == 'GET_ROOMS':
             self.send_room_list(client_id, server)
@@ -28,6 +32,26 @@ class RoomManager:
         elif msg_type == 'LEAVE_ROOM':
             room_id = message.get('room_id')
             self.leave_room(client_id, room_id, server)
+
+    # --- HÀM MỚI: TÌM TRẬN ---
+    def quick_match(self, client_id, server):
+        """Tìm phòng đang chờ có 1 người, nếu không có thì tạo mới"""
+        found_room_id = None
+        
+        # Duyệt tìm phòng phù hợp
+        for r_id, room in self.rooms.items():
+            if room['status'] == 'waiting' and len(room['players']) == 1:
+                # Đảm bảo không tự vào phòng mình vừa tạo (nếu logic client sai)
+                if client_id not in room['players']:
+                    found_room_id = r_id
+                    break
+        
+        if found_room_id:
+            # Tìm thấy -> Vào luôn
+            self.join_room(client_id, found_room_id, server)
+        else:
+            # Không thấy -> Tạo phòng mới
+            self.create_room(client_id, server)
             
     def create_room(self, client_id, server):
         room_id = f"room_{self.room_counter}"
@@ -46,24 +70,27 @@ class RoomManager:
         if client:
             client['room_id'] = room_id
         
-        # Gửi thông báo tạo phòng thành công cho người tạo
+        # Gửi thông báo tạo phòng
         server.send_to_client(client_id, {'type': 'ROOM_CREATED', 'room_id': room_id, 'player_symbol': 'X'})
 
-        # Broadcast a new room list to all clients
+        # Broadcast cập nhật danh sách
         self.broadcast_room_list(server)
-        
-        # Broadcast player list to reflect status change
         server.user_manager.broadcast_online_players(server)
         
     def join_room(self, client_id, room_id, server):
         if room_id not in self.rooms:
-            server.send_error(client_id, "Room not found")
+            server.send_error(client_id, "Phòng không tồn tại hoặc đã giải tán")
+            # Gửi lại danh sách phòng mới nhất để client cập nhật
+            self.send_room_list(client_id, server)
             return
             
         room = self.rooms[room_id]
         if len(room['players']) >= 2:
-            server.send_error(client_id, "Room is full")
+            server.send_error(client_id, "Phòng đã đầy")
             return
+        
+        if client_id in room['players']:
+             return # Đã ở trong phòng rồi
             
         room['players'].append(client_id)
         client = server.user_manager.get_client(client_id)
@@ -72,32 +99,42 @@ class RoomManager:
             
         room['status'] = 'playing'
         
-        # Xác định symbol cho người chơi
-        player_one_id = room['players'][0]
-        player_two_id = room['players'][1]
-        player_one_username = server.user_manager.get_client(player_one_id)['username']
-        player_two_username = server.user_manager.get_client(player_two_id)['username']
+        # --- FIX: LẤY DISPLAY NAME THAY VÌ USERNAME ---
+        p1_id = room['players'][0]
+        p2_id = room['players'][1]
+        
+        c1 = server.user_manager.get_client(p1_id)
+        c2 = server.user_manager.get_client(p2_id)
+        
+        p1_name = c1.get('display_name', c1['username'])
+        p2_name = c2.get('display_name', c2['username'])
+        # ---------------------------------------------
 
-        # Gửi thông báo cho từng người chơi
-        server.send_to_client(player_one_id, {
+        # Gửi thông báo vào game
+        server.send_to_client(p1_id, {
             'type': 'ROOM_JOINED', 'room_id': room_id, 
-            'players': [player_one_username, player_two_username], 'player_symbol': 'X'
+            'players': [p1_name, p2_name], 'player_symbol': 'X'
         })
-        server.send_to_client(player_two_id, {
+        server.send_to_client(p2_id, {
             'type': 'ROOM_JOINED', 'room_id': room_id,
-            'players': [player_one_username, player_two_username], 'player_symbol': 'O'
+            'players': [p1_name, p2_name], 'player_symbol': 'O'
         })
         
-        # Cập nhật danh sách phòng và người chơi cho tất cả client
+        # Cập nhật danh sách phòng
         self.broadcast_room_list(server)
         server.user_manager.broadcast_online_players(server)
         
     def send_room_list(self, client_id, server):
         room_list = []
         for r_id, r in self.rooms.items():
-            player_names = [server.user_manager.clients[p]['username'] for p in r['players']]
+            # --- FIX: HIỂN THỊ TÊN ĐẸP TRÊN DANH SÁCH PHÒNG ---
+            player_names = []
+            for p_id in r['players']:
+                c = server.user_manager.get_client(p_id)
+                if c:
+                    player_names.append(c.get('display_name', c['username']))
+            # --------------------------------------------------
             
-            # Tạo "Cặp đấu" từ tên người chơi
             match_text = " vs ".join(player_names) if player_names else "Chờ đối thủ..."
             if len(player_names) == 1:
                 match_text = f"{player_names[0]} vs ..."
@@ -121,7 +158,11 @@ class RoomManager:
             return
             
         room = self.rooms[room_id]
-        player_names = [server.user_manager.clients[p]['username'] for p in room['players']]
+        # Fix tên hiển thị khi xem
+        player_names = []
+        for p in room['players']:
+             c = server.user_manager.get_client(p)
+             player_names.append(c.get('display_name', c['username']))
         
         server.send_to_client(client_id, {
             'type': 'VIEW_MATCH_INFO',
@@ -131,10 +172,10 @@ class RoomManager:
         })
         
     def broadcast_room_list(self, server):
-        """Broadcasts the updated room list to all logged-in clients."""
-        for client_id in list(server.user_manager.clients.keys()):
-            client = server.user_manager.get_client(client_id)
-            if client and client.get('username'):
+        """Gửi danh sách phòng mới nhất cho tất cả mọi người"""
+        # Chỉ gửi cho những người KHÔNG ở trong phòng (đang ở sảnh) để đỡ spam
+        for client_id, client in server.user_manager.clients.items():
+            if client.get('room_id') is None: 
                 self.send_room_list(client_id, server)
 
     def leave_room(self, client_id, room_id, server):
@@ -142,35 +183,41 @@ class RoomManager:
             return
             
         room = self.rooms[room_id]
+        
+        # 1. Xóa người chơi khỏi list
         if client_id in room['players']:
             room['players'].remove(client_id)
             
-            client_left = server.user_manager.get_client(client_id)
-            if client_left:
-                client_left['room_id'] = None
-                username_left = client_left.get('username', 'Unknown')
-            else:
-                username_left = 'Unknown'
+        # Reset room_id của client về None
+        client_left = server.user_manager.get_client(client_id)
+        if client_left:
+            client_left['room_id'] = None
+            username_left = client_left.get('display_name', client_left.get('username', 'Unknown'))
+        else:
+            username_left = 'Unknown'
 
-            # Thông báo cho người còn lại
-            if room['players']:
-                opponent_id = room['players'][0]
-                server.send_to_client(opponent_id, {
-                    'type': 'OPPONENT_LEFT',
-                    'message': f'{username_left} đã rời phòng'
-                })
-                room['status'] = 'waiting'
+        # 2. Thông báo cho người còn lại (nếu có)
+        if room['players']:
+            opponent_id = room['players'][0]
+            server.send_to_client(opponent_id, {
+                'type': 'OPPONENT_LEFT',
+                'message': f'{username_left} đã rời phòng'
+            })
+            room['status'] = 'waiting'
+            # Reset bàn cờ
+            room['board'] = CaroBoard()
+            print(f"Room {room_id}: Player left. Waiting for new opponent.")
+        
+        # 3. QUAN TRỌNG: Nếu phòng TRỐNG -> XÓA NGAY LẬP TỨC
+        else:
+            print(f"Room {room_id} is empty. Deleting...")
+            del self.rooms[room_id]
+            if room_id in self.room_owners:
+                del self.room_owners[room_id]
             
-            # Nếu phòng trống thì xóa
-            if not room['players']:
-                del self.rooms[room_id]
-                if room_id in self.room_owners:
-                    del self.room_owners[room_id]
-            
-            # Cập nhật cho mọi người
-            self.broadcast_room_list(server)
-            server.user_manager.broadcast_online_players(server)
+            # Cập nhật UI cho mọi người
+        self.broadcast_room_list(server)
+        server.user_manager.broadcast_online_players(server)
             
     def handle_client_disconnect(self, client_id, room_id, server):
-        """Xử lý khi client disconnect (gọi từ main server)"""
-        self.leave_room(client_id, room_id, server)
+        self.leave_room(client_id, room_id, server) 
