@@ -1,19 +1,18 @@
-# client/app.py
 import tkinter as tk
 from tkinter import messagebox
 import queue
 
+# Đảm bảo các file này đã tồn tại
 from network import NetworkClient
 from views.login_view import LoginView
 from views.lobby_view import LobbyView
 from views.game_view import GameView
 from views.profile_view import ProfileView
 
-
 class CaroClient:
     def __init__(self):
         self.window = tk.Tk()
-        self.window.title("Caro Online - 99.hoangtran@gmail.com")
+        self.window.title("Caro Online")
         self.window.geometry("900x650")
 
         # Message queue for thread-safe UI updates
@@ -37,6 +36,9 @@ class CaroClient:
         self.pending_username = None
         self.pending_password = None
 
+        # Cờ kiểm soát logout (để tránh hiện popup lỗi khi tự bấm thoát)
+        self.is_logging_out = False
+
         # Initialize views
         self.views = {}
         self.setup_views()
@@ -55,7 +57,8 @@ class CaroClient:
         """Switch between views"""
         # If switching back to login, ensure user is logged out
         if view_name == 'login':
-            self.logout(False) # Don't send disconnect message if already disconnected
+            # THAY ĐỔI Ở ĐÂY: Thêm tham số redirect_to_login=False để chặn vòng lặp
+            self.logout(send_disconnect=False, redirect_to_login=False) 
 
         for view in self.views.values():
             view.hide()
@@ -92,32 +95,67 @@ class CaroClient:
         print(f"📩 UI Thread Processing: {message}")
 
         if msg_type == 'CONNECTION_SUCCESS':
-            print("Connection successful, sending login info...")
-            self.network.send({
-                'type': 'LOGIN', 
-                'username': self.pending_username, 
-                'password': self.pending_password
-            })
+            print("Connection successful...")
+            
+            # Kiểm tra xem đang Login hay Register
+            if getattr(self, 'is_registering', False):
+                # Gửi lệnh Đăng Ký
+                print("Sending REGISTER info...")
+                self.network.send({
+                    'type': 'REGISTER', 
+                    'username': self.pending_username, 
+                    'password': self.pending_password,
+                    'display_name': self.pending_display_name
+                })
+                # Reset cờ
+                self.is_registering = False
+            else:
+                # Gửi lệnh Đăng Nhập (như cũ)
+                print("Sending LOGIN info...")
+                self.network.send({
+                    'type': 'LOGIN', 
+                    'username': self.pending_username, 
+                    'password': self.pending_password
+                })
+            
         elif msg_type == 'CONNECTION_FAILED':
-            messagebox.showerror("Connection Failed", f"Could not connect to server.\n{message.get('error', '')}")
-            self.views['login'].set_login_button_state(True) # Re-enable button
+            # Nếu đang ở màn hình login thì hiển thị lỗi lên giao diện
+            if 'login' in self.views and self.current_room is None:
+                self.views['login'].set_status(f"Lỗi kết nối: {message.get('error')}", "red")
+                self.views['login'].set_login_button_state(True)
+            else:
+                messagebox.showerror("Connection Failed", f"Could not connect to server.\n{message.get('error', '')}")
+
         elif msg_type == 'DISCONNECTED':
-            messagebox.showinfo("Disconnected", "You have been disconnected from the server.")
-            self.show_view('login')
+            # CHỈ HIỆN THÔNG BÁO NẾU KHÔNG PHẢI DO NGƯỜI DÙNG BẤM LOGOUT
+            if not self.is_logging_out:
+                messagebox.showinfo("Disconnected", "Mất kết nối tới máy chủ.")
+                self.show_view('login')
+            self.is_logging_out = False
+
         elif msg_type == 'LOGIN_SUCCESS':
             self.on_login_success(message)
+
         elif msg_type in ['ROOM_LIST', 'ONLINE_PLAYERS', 'VIEW_MATCH_INFO']:
             if 'lobby' in self.views: self.views['lobby'].handle_message(message)
+
         elif msg_type in ['ROOM_CREATED', 'ROOM_JOINED', 'OPPONENT_MOVE', 
                          'GAME_OVER', 'OPPONENT_LEFT', 'CHAT']:
             if 'game' in self.views: self.views['game'].handle_message(message)
+
         elif msg_type == 'PROFILE_UPDATED':
             if 'profile' in self.views: self.views['profile'].handle_message(message)
+
         elif msg_type == 'ERROR':
-            messagebox.showerror("Error", message.get('message'))
-            # If login fails, re-enable the button
-            if 'Login Failed' in message.get('message', ''):
-                self.views['login'].set_login_button_state(True)
+            err_msg = message.get('message', 'Unknown Error')
+            
+            # Nếu đang ở màn hình login (chưa vào phòng) -> Hiển thị lỗi lên form đăng nhập
+            if self.current_room is None and 'login' in self.views:
+                 self.views['login'].set_status(err_msg, "red")
+                 self.views['login'].set_login_button_state(True)
+            else:
+                # Nếu đang chơi hoặc ở lobby -> Hiện popup
+                messagebox.showerror("Error", err_msg)
 
     def on_login_success(self, message):
         """Handle successful login"""
@@ -125,7 +163,6 @@ class CaroClient:
         self.display_name = message.get('display_name', self.username)
         self.window.title(f"Caro Game - {self.username}")
         
-        # Clear pending credentials
         self.pending_username = None
         self.pending_password = None
         
@@ -140,65 +177,81 @@ class CaroClient:
     def login(self, username, password):
         """Start the login process."""
         if not username or not password:
-            messagebox.showwarning("Login", "Username and password cannot be empty.")
+            if 'login' in self.views:
+                self.views['login'].set_status("Vui lòng nhập đầy đủ thông tin", "red")
             return
 
-        # Disable login button to prevent multiple clicks
-        self.views['login'].set_login_button_state(False)
+        # Disable login button
+        if 'login' in self.views:
+            self.views['login'].set_login_button_state(False)
         
         self.pending_username = username
         self.pending_password = password
+
+        # --- FIX LỖI: TẠO MỚI SOCKET KHI LOGIN LẠI ---
+        try:
+            self.network.disconnect()
+        except:
+            pass
+            
+        self.network = NetworkClient()
+        self.network.set_handler(self.queue_server_message)
+        # ---------------------------------------------
+
         self.network.start_connection()
 
-    def logout(self, send_disconnect=True):
+    def logout(self, send_disconnect=True, redirect_to_login=True):
         """Logout and return to login screen"""
+        self.is_logging_out = True
+        
         if send_disconnect:
-            self.network.disconnect()
+            try:
+                self.network.disconnect()
+            except:
+                pass
+                
         self.username = None
         self.display_name = None
         self.current_room = None
         self.game_active = False
-        # Do not call show_view here to avoid loops. It's handled by the caller.
+        
+        if 'login' in self.views:
+            self.views['login'].set_status("") 
+            self.views['login'].set_login_button_state(True)
+
+        # THAY ĐỔI Ở ĐÂY: Chỉ chuyển màn hình nếu được phép
+        if redirect_to_login:
+            self.show_view('login')
 
     def create_room(self):
-        """Create new room"""
         self.network.send({'type': 'CREATE_ROOM'})
 
     def join_room(self, room_id):
-        """Join existing room"""
         self.network.send({'type': 'JOIN_ROOM', 'room_id': room_id})
 
     def send_move(self, x, y):
-        """Send move to server"""
         self.network.send({'type': 'MOVE', 'x': x, 'y': y, 'room_id': self.current_room})
 
     def send_chat(self, message):
-        """Send chat message"""
         self.network.send({'type': 'CHAT', 'message': message, 'room_id': self.current_room})
 
     def surrender(self):
-        """Surrender current game"""
         self.network.send({'type': 'SURRENDER', 'room_id': self.current_room})
 
     def refresh_all_data(self):
-        """Refresh both rooms and online players"""
         self.refresh_rooms()
         self.refresh_online_players()
 
     def refresh_rooms(self):
-        """Request room list"""
         self.network.send({'type': 'GET_ROOMS'})
 
     def refresh_online_players(self):
-        """Request online players list"""
         self.network.send({'type': 'GET_ONLINE_PLAYERS'})
 
     def view_match(self, room_id):
-        """Request to view match"""
         self.network.send({'type': 'VIEW_MATCH', 'room_id': room_id})
 
     def update_profile(self, display_name, old_password, new_password):
-        """Update user profile"""
         self.network.send({
             'type': 'EDIT_PROFILE',
             'display_name': display_name,
@@ -209,14 +262,12 @@ class CaroClient:
     # ================= GAME STATE =================
 
     def set_game_state(self, room_id, player_symbol, game_active=True):
-        """Set current game state"""
         self.current_room = room_id
         self.player_symbol = player_symbol
         self.game_active = game_active
-        self.current_turn = 'X'  # Reset turn
+        self.current_turn = 'X' 
 
     def get_game_state(self):
-        """Get current game state"""
         return {
             'room_id': self.current_room,
             'player_symbol': self.player_symbol,
@@ -227,18 +278,20 @@ class CaroClient:
         }
 
     def switch_turn(self):
-        """Switch turn between players"""
         self.current_turn = 'O' if self.current_turn == 'X' else 'X'
 
     # ================= UTILITIES =================
 
     def on_close(self):
         """Handle window close"""
-        self.network.disconnect()
+        self.is_logging_out = True # Tránh lỗi khi đóng app
+        try:
+            self.network.disconnect()
+        except:
+            pass
         self.window.destroy()
 
     def run(self):
-        """Start the application"""
         self.process_message_queue()
         self.window.mainloop()
 
