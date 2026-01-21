@@ -26,7 +26,7 @@ class RoomList(tk.Frame):
     def create_widgets(self):
         scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL)
         # Chú ý: Cột thứ 4 là 'raw_id' dùng để lưu ID gốc nhưng không hiển thị
-        columns = ('display_id', 'name', 'count', 'raw_id')
+        columns = ('display_id', 'name', 'count', 'raw_id', 'has_pass')
         
         self.tree = ttk.Treeview(self, columns=columns, show='headings', 
                                  yscrollcommand=scrollbar.set, selectmode='browse')
@@ -63,6 +63,9 @@ class RoomList(tk.Frame):
             except:
                 display_id = raw_id
 
+            if room.get('has_password'):
+                display_id = "🔒 " + display_id
+
             status_text = f"{room['count']}/2"
             if room['status'] == 'playing':
                 status_text += " (Đang chơi)"
@@ -72,15 +75,25 @@ class RoomList(tk.Frame):
                 display_id,           # Cột 1: Tên đẹp
                 room['match_text'],   # Cột 2: Cặp đấu
                 status_text,          # Cột 3: Trạng thái
-                raw_id                # Cột 4 (Ẩn): ID gốc để xử lý logic
+                raw_id,               # Cột 4 (Ẩn): ID gốc để xử lý logic
+                room.get('has_password', False) # Cột 5 (Ẩn): Có pass không
             ))
 
     def get_selected_room(self):
         selected = self.tree.selection()
         if selected:
             # Lấy giá trị từ cột ẩn 'raw_id' (index 3)
-            # Đây là cách chuẩn nhất, không cần split chuỗi gì cả
             return self.tree.item(selected[0])['values'][3]
+        return None
+
+    def get_selected_room_info(self):
+        selected = self.tree.selection()
+        if selected:
+            values = self.tree.item(selected[0])['values']
+            return {
+                'id': values[3],
+                'has_password': values[4] if len(values) > 4 else False
+            }
         return None
 
     def on_double_click(self, event):

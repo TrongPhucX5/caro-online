@@ -18,7 +18,9 @@ class CaroServer:
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
         # KẾT NỐI DATABASE
-        self.db = CaroDatabase("../database/caro.db")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(base_dir, "../database/caro.db")
+        self.db = CaroDatabase(db_path)
         
         # Khởi tạo managers
         self.user_manager = UserManager(self.db)
@@ -61,30 +63,58 @@ class CaroServer:
         self.client_counter += 1
         self.user_manager.add_client(client_id, client_socket)
         
+        buffer = ""
         try:
             while self.running:
-                data = client_socket.recv(4096)
-                if not data: break
-                
                 try:
-                    # Xử lý dính gói tin (TCP sticky packets)
-                    buffer = data.decode('utf-8')
-                    messages = []
-                    # Logic tách gói tin JSON
-                    temp = buffer.replace('}{', '}|{')
-                    for part in temp.split('|'):
-                        messages.append(part)
-
-                    for msg_str in messages:
-                        if not msg_str.strip(): continue
-                        message = json.loads(msg_str)
-                        self.process_message(client_id, message)
+                    data = client_socket.recv(4096)
+                    if not data: break
+                    buffer += data.decode('utf-8')
+                except Exception as e:
+                    print(f"⚠️ Socket receive error for {client_id}: {e}")
+                    break
+                
+                # --- ROBUST JSON PARSING (BRACE COUNTING) ---
+                while True:
+                    start_index = buffer.find('{')
+                    if start_index == -1:
+                        buffer = "" # Discard garbage
+                        break
                         
-                except json.JSONDecodeError:
-                    print(f"⚠️ Invalid JSON from {client_id}")
+                    brace_count = 0
+                    end_index = -1
                     
+                    for i, char in enumerate(buffer[start_index:], start=start_index):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                end_index = i
+                                break
+                    
+                    if end_index != -1:
+                        json_str = buffer[start_index : end_index + 1]
+                        buffer = buffer[end_index + 1:] # Keep remainder
+                        
+                        try:
+                            message = json.loads(json_str)
+                            # --- SAFE MESSAGE PROCESSING ---
+                            try:
+                                self.process_message(client_id, message)
+                            except Exception as e:
+                                print(f"❌ Error processing message from {client_id}: {e}")
+                                import traceback
+                                traceback.print_exc()
+                        except json.JSONDecodeError:
+                            print(f"⚠️ Invalid JSON from {client_id}: {json_str[:50]}...")
+                    else:
+                        break # Incomplete message, wait for more data
+
         except Exception as e:
             print(f"Error client {client_id}: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             self.disconnect_client(client_id)
 
@@ -131,12 +161,22 @@ class CaroServer:
         
         if room_id and room_id in self.room_manager.rooms:
             room = self.room_manager.rooms[room_id]
-            # Gửi tên hiển thị thay vì username
-            sender_name = client.get('display_name', client['username'])
+            # Gửi tên hiển thị thay vì username (Fallback nếu None)
+            sender_name = client.get('display_name') or client.get('username') or f"Client {client_id}"
             
             for pid in room['players']:
                 if pid != client_id:
                     self.send_to_client(pid, {
+                        'type': 'CHAT',
+                        'sender': sender_name,
+                        'message': message_content
+                    })
+                    
+            # Broadcast to Spectators
+            for spec_id in room.get('spectators', []):
+                 # Don't send back to self if spectator is chatting (though spectators usually can't chat)
+                 if spec_id != client_id:
+                    self.send_to_client(spec_id, {
                         'type': 'CHAT',
                         'sender': sender_name,
                         'message': message_content

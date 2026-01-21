@@ -197,6 +197,8 @@ class UserManager:
     def send_to_client(self, client_id, message):
         if client_id in self.clients:
             try:
-                self.clients[client_id]['socket'].send(json.dumps(message).encode('utf-8'))
-            except: 
+                self.clients[client_id]['socket'].sendall(json.dumps(message).encode('utf-8'))
+            except Exception as e: 
+                print(f"❌ Error sending to {client_id}: {e}")
+                # Don't auto-disconnect here, let recv loop handle it
                 pass

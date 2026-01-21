@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
+from sound_manager import SoundManager
 
 class GameView:
     def __init__(self, parent, controller):
@@ -27,6 +28,7 @@ class GameView:
         self.player_label = None
         self.turn_indicator = None
         self.overlay = None # Lưu overlay kết quả để xóa khi cần
+        self.timer_id = None
         
         self.create_widgets()
         
@@ -52,6 +54,12 @@ class GameView:
                                        fg=self.colors['primary'], bg=self.colors['bg_main'],
                                        font=("Segoe UI", 11, "italic"))
         self.turn_indicator.pack(side=tk.RIGHT)
+        
+        # Timer Label
+        self.timer_label = tk.Label(status_frame, text="30s", 
+                                    fg=self.colors['text_dark'], bg=self.colors['bg_main'],
+                                    font=("Segoe UI", 12, "bold"), width=6)
+        self.timer_label.pack(side=tk.RIGHT, padx=10)
 
         # Canvas Bàn cờ
         board_frame = tk.Frame(left_panel, bg='white', bd=1, relief=tk.SOLID)
@@ -148,8 +156,10 @@ class GameView:
         if player == 'X':
             self.canvas.create_line(x1, y1, x2, y2, fill=self.colors['x_color'], width=3, capstyle=tk.ROUND)
             self.canvas.create_line(x1, y2, x2, y1, fill=self.colors['x_color'], width=3, capstyle=tk.ROUND)
+            SoundManager.play_move_x()
         else:
             self.canvas.create_oval(x1, y1, x2, y2, outline=self.colors['o_color'], width=3)
+            SoundManager.play_move_o()
 
     def on_board_click(self, event):
         # KHÓA CLICK: Nếu game chưa active -> Chặn
@@ -170,6 +180,7 @@ class GameView:
             self.controller.send_move(x, y)
             self.controller.switch_turn()
             self.update_turn_indicator()
+            self.start_timer()
 
     # --- CÁC HÀM CHỨC NĂNG ---
     def leave_game(self):
@@ -226,6 +237,12 @@ class GameView:
 
     def update_turn_indicator(self):
         state = self.controller.get_game_state()
+        
+        # Nếu là khán giả
+        if state['player_symbol'] is None:
+             self.turn_indicator.config(text=f"Lượt của {state['current_turn']}", fg='gray')
+             return
+
         if state['current_turn'] == state['player_symbol']:
             self.turn_indicator.config(text="✨ Đến lượt bạn!", fg=self.colors['primary'])
         else:
@@ -255,10 +272,13 @@ class GameView:
         
         if result_type == 'WIN':
             text, color, msg = "🏆 CHIẾN THẮNG!", "#10b981", "Bạn chơi quá hay!"
+            SoundManager.play_win()
         elif result_type == 'LOSE':
             text, color, msg = "💀 THẤT BẠI!", "#ef4444", "Đừng buồn, thử lại nào!"
+            SoundManager.play_lose()
         else:
             text, color, msg = "🤝 HÒA CỜ!", "#f59e0b", "Trận đấu cân não!"
+            SoundManager.play_notify()
             
         tk.Label(inner, text=text, font=("Segoe UI", 18, "bold"), fg=color, bg='white').pack(pady=(0, 10))
         tk.Label(inner, text=msg, font=("Segoe UI", 10), fg="#4b5563", bg='white').pack(pady=(0, 20))
@@ -276,6 +296,47 @@ class GameView:
                   bg="#e5e7eb", fg="black", font=("Segoe UI", 9, "bold"),
                   relief=tk.FLAT, width=10, height=2).pack(side=tk.RIGHT, padx=5)
 
+    # --- TIMER LOGIC ---
+    def start_timer(self):
+        try:
+            val = int(self.controller.time_limit)
+            self.remaining_time = val
+        except:
+            self.remaining_time = 30 # Fallback default
+            
+        self.update_timer_display()
+        
+        if self.timer_id:
+            try:
+                self.frame.after_cancel(self.timer_id)
+            except: pass
+            self.timer_id = None
+            
+        self.run_timer()
+        
+    def run_timer(self):
+        try:
+            if not self.controller.game_active:
+                return
+                
+            if self.remaining_time > 0:
+                self.remaining_time -= 1
+                self.update_timer_display()
+                self.timer_id = self.frame.after(1000, self.run_timer)
+            else:
+                # Hết giờ client tự hiểu là server sẽ xử lý
+                self.timer_label.config(text="0s", fg='red')
+        except Exception as e:
+            print(f"Timer error: {e}")
+            self.timer_id = None
+            
+    def update_timer_display(self):
+        self.timer_label.config(text=f"{self.remaining_time}s")
+        if self.remaining_time <= 5:
+            self.timer_label.config(fg='#ef4444') # Đỏ khi sắp hết
+        else:
+            self.timer_label.config(fg=self.colors['text_dark'])
+
     # --- XỬ LÝ MESSAGE ---
     def handle_message(self, message):
         msg_type = message.get('type')
@@ -288,12 +349,16 @@ class GameView:
             self.draw_board()
             self.game_status.config(text=f"Phòng chờ...", fg=self.colors['text_dark'])
             self.turn_indicator.config(text="⏳ Đang đợi người vào...", fg='gray')
+            self.timer_label.config(text="--") # Reset timer label
             self.controller.show_view('game')
             
         elif msg_type == 'ROOM_JOINED':
             room_id = message.get('room_id')
             players = message.get('players', [])
             player_symbol = message.get('player_symbol')
+            
+            # Cập nhật Time Limit
+            self.controller.time_limit = message.get('time_limit', 30)
 
             if player_symbol:
                 # Có đủ 2 người -> Set True để chơi
@@ -309,19 +374,60 @@ class GameView:
             self.game_status.config(text="Trận đấu bắt đầu!", fg=self.colors['primary'])
             self.draw_board()
             self.update_turn_indicator()
+            self.start_timer() # Start Timer
             
             self.add_chat_message("Hệ thống", f"Phòng: {', '.join(players)}")
             self.controller.show_view('game')
             
+        elif msg_type == 'BOARD_STATE':
+            moves = message.get('moves', [])
+            self.draw_board() # Reset board first
+            for move in moves:
+                x, y, val = move['x'], move['y'], move['val']
+                self.draw_piece(x, y, val)
+                
+        elif msg_type == 'VIEW_MATCH_INFO':
+            # Xử lý khi xem
+            room_id = message.get('room_id')
+            players = message.get('players', [])
+            
+            # Setup UI cho Viewer
+            self.game_status.config(text=f"Đang xem: {', '.join(players)}", fg=self.colors['text_dark'])
+            self.player_label.config(text="Khán giả", fg='gray')
+            self.turn_indicator.config(text="Đang theo dõi trận đấu", fg='gray')
+            # Set game_active để nhận update bàn cờ
+            self.controller.game_active = True
+            
+            # Ẩn nút chức năng
+            pass
+
+        elif msg_type == 'SYNC_TIMER':
+            self.remaining_time = message.get('remaining_time', 0)
+            self.update_timer_display()
+            # Nếu đang playing thì chạy tiếp
+            if self.controller.game_active: # Spectator sets active=False?
+                # Spectator might treat game as active=True to see updates?
+                # For safety, just run timer locally
+                if self.timer_id: self.frame.after_cancel(self.timer_id)
+                self.run_timer()
+
         elif msg_type == 'OPPONENT_MOVE':
             x, y = message.get('x'), message.get('y')
-            opp_symbol = 'O' if self.controller.player_symbol == 'X' else 'X'
+            # Ưu tiên lấy symbol server gửi, nếu không có thì fallback logic cũ (cho player)
+            server_symbol = message.get('symbol')
+            if server_symbol:
+                opp_symbol = server_symbol
+            else:
+                opp_symbol = 'O' if self.controller.player_symbol == 'X' else 'X'
+            
             self.draw_piece(x, y, opp_symbol)
             self.controller.switch_turn()
             self.update_turn_indicator()
+            self.start_timer() # Reset Timer
             
         elif msg_type == 'GAME_OVER':
             self.controller.game_active = False # Dừng game
+            if self.timer_id: self.frame.after_cancel(self.timer_id) # Stop Timer
             winner = message.get('winner')
             self.turn_indicator.config(text="Kết thúc", fg='red')
             
@@ -337,12 +443,18 @@ class GameView:
             # Chỉ báo thắng nều game ĐANG DIỄN RA
             if self.controller.game_active:
                 self.controller.game_active = False
-                messagebox.showinfo("Thông báo", "Đối thủ đã thoát trận. Bạn thắng!")
-                self.leave_game()
+                
+                # Check xem mình là người chơi hay spectator
+                if self.controller.player_symbol: # Là người chơi
+                    messagebox.showinfo("Thông báo", "Đối thủ đã thoát trận. Bạn thắng!")
+                    self.leave_game()
+                else: # Là khán giả
+                    messagebox.showinfo("Thông báo", "Một người chơi đã thoát trận. Kết thúc!")
+                    self.leave_game()
             else:
                 # Nếu game đã xong rồi mà đối thủ thoát -> Chỉ thông báo nhẹ hoặc bỏ qua
                 # (Vì lúc này bạn đang xem bảng kết quả, không cần popup làm phiền)
-                self.add_chat_message("Hệ thống", "Đối thủ đã rời phòng.")
+                self.add_chat_message("Hệ thống", "Người chơi đã rời phòng.")
             
         elif msg_type == 'CHAT':
             self.add_chat_message(message.get('sender'), message.get('message'))

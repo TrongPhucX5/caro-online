@@ -163,11 +163,63 @@ class LobbyView:
         else: messagebox.showwarning("!", "Chọn phòng trước")
         
     def join_selected_room(self):
-        rid = self.room_list.get_selected_room()
-        if rid: self.controller.join_room(rid)
-        else: messagebox.showwarning("!", "Chọn phòng trước")
+        # Dùng hàm mới để lấy info đầy đủ
+        info = self.room_list.get_selected_room_info()
+        if not info:
+            messagebox.showwarning("!", "Chọn phòng trước")
+            return
+            
+        rid = info['id']
+        has_pass = info['has_password']
         
-    def create_room(self): self.controller.create_room()
+        password = None
+        if has_pass:
+            from tkinter import simpledialog
+            password = simpledialog.askstring("Mật khẩu", "Phòng này yêu cầu mật khẩu:")
+            if password is None: # User bấm Cancel
+                return
+                
+        self.controller.join_room(rid, password)
+        
+    def create_room(self):
+        # Tạo dialog tùy chỉnh
+        dialog = tk.Toplevel(self.frame)
+        dialog.title("Tạo phòng mới")
+        dialog.geometry("300x250")
+        dialog.config(bg='white')
+        
+        # Center dialog
+        x = self.parent.winfo_x() + 100
+        y = self.parent.winfo_y() + 100
+        dialog.geometry(f"+{x}+{y}")
+        
+        tk.Label(dialog, text="Cấu hình phòng", font=("Segoe UI", 12, "bold"), bg='white').pack(pady=10)
+        
+        # Password
+        tk.Label(dialog, text="Mật khẩu (Để trống nếu công khai):", bg='white').pack(anchor='w', padx=20)
+        pass_entry = tk.Entry(dialog, show="*")
+        pass_entry.pack(fill=tk.X, padx=20, pady=5)
+        
+        # Time Limit
+        tk.Label(dialog, text="Thời gian suy nghĩ (giây):", bg='white').pack(anchor='w', padx=20)
+        time_entry = tk.Entry(dialog)
+        time_entry.insert(0, "30")
+        time_entry.pack(fill=tk.X, padx=20, pady=5)
+        
+        def on_create():
+            pwd = pass_entry.get().strip()
+            try:
+                limit = int(time_entry.get())
+                if limit < 5: limit = 5
+                if limit > 300: limit = 300
+            except:
+                limit = 30
+                
+            self.controller.create_room(password=pwd if pwd else None, time_limit=limit)
+            dialog.destroy()
+            
+        tk.Button(dialog, text="Tạo phòng", command=on_create, 
+                 bg=self.colors['success'], fg='white', relief=tk.FLAT).pack(pady=20)
     def refresh_all_data(self): self.controller.refresh_all_data()
     
     def show(self): 

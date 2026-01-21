@@ -1,5 +1,6 @@
 # server/game_logic.py
 import json
+import time
 
 class GameLogic:
     @staticmethod
@@ -34,17 +35,52 @@ class GameLogic:
         except:
             return
             
+        # Check Timer
+        if room['turn_deadline'] and time.time() > room['turn_deadline']:
+            print(f"⏳ Time expired for {client['username']}")
+            # Auto lose logic
+            GameLogic.handle_game_over(room, room['players'][1 - p_idx], server) # Opponent wins
+            return
+            
+        # Check if it's the player's turn
+        # p_idx is 0 for player 1 (X), 1 for player 2 (O)
+        # board.current_player is 1 for X, 2 for O
+        if p_idx != (0 if room['board'].current_player == 1 else 1):
+            print(f"⚠️ Move rejected: Not player's turn. Client: {client_id}, Board Turn: {room['board'].current_player}")
+            return
+            
         x, y = message.get('x'), message.get('y')
         success, result = board.make_move(x, y, player_num)
         
         if success:
+            print(f"✅ Move valid: {x},{y} by {client_id}. Result: {result}")
             opponent_id = room['players'][1 - p_idx]
             player_name = client.get('display_name', client['username'])
-            server.send_to_client(opponent_id, {
-                'type': 'OPPONENT_MOVE',
-                'x': x, 'y': y,
-                'player': client['username']
-            })
+            symbol = 'X' if player_num == 1 else 'O'
+            
+            try:
+                server.send_to_client(opponent_id, {
+                    'type': 'OPPONENT_MOVE',
+                    'x': x, 'y': y,
+                    'player': client['username'],
+                    'symbol': symbol
+                })
+                print(f"📡 Sent OPPONENT_MOVE to {opponent_id}")
+            except Exception as e:
+                print(f"❌ Failed to send move to opponent {opponent_id}: {e}")
+            
+            # Broadcast to Spectators
+            for spec_id in room.get('spectators', []):
+                server.send_to_client(spec_id, {
+                    'type': 'OPPONENT_MOVE',
+                    'x': x, 'y': y,
+                    'player': client['username'], # Or display_name if needed
+                    'symbol': symbol
+                })
+            
+            # Reset Timer
+            room['turn_deadline'] = time.time() + room['time_limit']
+            
             
             if result == 'win':
                 GameLogic.handle_game_over(room, client_id, server)
@@ -90,6 +126,11 @@ class GameLogic:
         room['status'] = 'playing'
         
         # 2. Hoán đổi vị trí (Người thắng ván trước đi sau, hoặc đổi lượt)
+        if len(room['players']) < 2:
+            print(f"⚠️ Cannot restart room {room.get('id')}: Not enough players.")
+            server.send_error(client_id, "Đối thủ đã rời phòng. Không thể chơi lại.")
+            return
+
         room['players'].reverse() 
         
         # 3. Lấy tên hiển thị chuẩn để gửi về Client
@@ -111,6 +152,9 @@ class GameLogic:
                 'players': [p1_name, p2_name],
                 'player_symbol': symbol # <--- QUAN TRỌNG: Phải gửi cái này client mới biết ai đánh
             })
+            
+        # Reset Timer
+        room['turn_deadline'] = time.time() + room['time_limit'] + 2 # buffer
             
         print(f"🔄 Room {room_id} restarted! X: {p1_name}, O: {p2_name}")
         
@@ -149,9 +193,15 @@ class GameLogic:
         for pid in room['players']:
             server.send_to_client(pid, {
                 'type': 'GAME_OVER',
-                # Dùng display_name cho thông báo đẹp
                 'message': f"Kết thúc! Người thắng: {winner_display_name}" if winner_id else "Hòa cờ!",
-                # Dùng username gốc để Client so sánh logic (if winner == my_username)
+                'winner': winner_username if winner_id else 'Draw' 
+            })
+            
+        # Broadcast to Spectators
+        for spec_id in room.get('spectators', []):
+             server.send_to_client(spec_id, {
+                'type': 'GAME_OVER',
+                'message': f"Kết thúc! Người thắng: {winner_display_name}" if winner_id else "Hòa cờ!",
                 'winner': winner_username if winner_id else 'Draw' 
             })
         

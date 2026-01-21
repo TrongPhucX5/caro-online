@@ -41,6 +41,13 @@ class CaroClient:
 
         # Initialize views
         self.views = {}
+        
+        # Timer variables
+        self.time_limit = 30
+        self.remaining_time = 30
+        self.timer_running = False
+        self.timer_id = None
+
         self.setup_views()
         
         self.show_view('login')
@@ -91,71 +98,83 @@ class CaroClient:
 
     def _process_server_message(self, message):
         """Process a single message from the server."""
-        msg_type = message.get('type')
-        print(f"📩 UI Thread Processing: {message}")
-
-        if msg_type == 'CONNECTION_SUCCESS':
-            print("Connection successful...")
+        try:
+            msg_type = message.get('type')
+            print(f"📩 UI Thread Processing: {message}")
+    
+            if msg_type == 'CONNECTION_SUCCESS':
+                print("Connection successful...")
+                
+                # Kiểm tra xem đang Login hay Register
+                if getattr(self, 'is_registering', False):
+                    # Gửi lệnh Đăng Ký
+                    print("Sending REGISTER info...")
+                    self.network.send({
+                        'type': 'REGISTER', 
+                        'username': self.pending_username, 
+                        'password': self.pending_password,
+                        'display_name': self.pending_display_name
+                    })
+                    # Reset cờ
+                    self.is_registering = False
+                else:
+                    # Gửi lệnh Đăng Nhập (như cũ)
+                    print("Sending LOGIN info...")
+                    self.network.send({
+                        'type': 'LOGIN', 
+                        'username': self.pending_username, 
+                        'password': self.pending_password
+                    })
             
-            # Kiểm tra xem đang Login hay Register
-            if getattr(self, 'is_registering', False):
-                # Gửi lệnh Đăng Ký
-                print("Sending REGISTER info...")
-                self.network.send({
-                    'type': 'REGISTER', 
-                    'username': self.pending_username, 
-                    'password': self.pending_password,
-                    'display_name': self.pending_display_name
-                })
-                # Reset cờ
-                self.is_registering = False
-            else:
-                # Gửi lệnh Đăng Nhập (như cũ)
-                print("Sending LOGIN info...")
-                self.network.send({
-                    'type': 'LOGIN', 
-                    'username': self.pending_username, 
-                    'password': self.pending_password
-                })
+            elif msg_type == 'CONNECTION_FAILED':
+                # Nếu đang ở màn hình login thì hiển thị lỗi lên giao diện
+                if 'login' in self.views and self.current_room is None:
+                    self.views['login'].set_status(f"Lỗi kết nối: {message.get('error')}", "red")
+                    self.views['login'].set_login_button_state(True)
+                else:
+                    messagebox.showerror("Connection Failed", f"Could not connect to server.\n{message.get('error', '')}")
             
-        elif msg_type == 'CONNECTION_FAILED':
-            # Nếu đang ở màn hình login thì hiển thị lỗi lên giao diện
-            if 'login' in self.views and self.current_room is None:
-                self.views['login'].set_status(f"Lỗi kết nối: {message.get('error')}", "red")
-                self.views['login'].set_login_button_state(True)
-            else:
-                messagebox.showerror("Connection Failed", f"Could not connect to server.\n{message.get('error', '')}")
+            elif msg_type == 'DISCONNECTED':
+                # CHỈ HIỆN THÔNG BÁO NẾU KHÔNG PHẢI DO NGƯỜI DÙNG BẤM LOGOUT
+                if not self.is_logging_out:
+                    messagebox.showinfo("Disconnected", "Mất kết nối tới máy chủ.")
+                    self.show_view('login')
+                self.is_logging_out = False
 
-        elif msg_type == 'DISCONNECTED':
-            # CHỈ HIỆN THÔNG BÁO NẾU KHÔNG PHẢI DO NGƯỜI DÙNG BẤM LOGOUT
-            if not self.is_logging_out:
-                messagebox.showinfo("Disconnected", "Mất kết nối tới máy chủ.")
-                self.show_view('login')
-            self.is_logging_out = False
+            elif msg_type == 'LOGIN_SUCCESS':
+                self.on_login_success(message)
 
-        elif msg_type == 'LOGIN_SUCCESS':
-            self.on_login_success(message)
+            elif msg_type in ['ROOM_LIST', 'ONLINE_PLAYERS']:
+                if 'lobby' in self.views: self.views['lobby'].handle_message(message)
 
-        elif msg_type in ['ROOM_LIST', 'ONLINE_PLAYERS', 'VIEW_MATCH_INFO']:
-            if 'lobby' in self.views: self.views['lobby'].handle_message(message)
+            elif msg_type == 'VIEW_MATCH_INFO':
+                # Khi nhận thông tin trận đấu -> Chuyển màn hình luôn
+                if 'game' in self.views: 
+                    self.views['game'].handle_message(message)
+                    self.show_view('game')
 
-        elif msg_type in ['ROOM_CREATED', 'ROOM_JOINED', 'OPPONENT_MOVE', 
-                         'GAME_OVER', 'OPPONENT_LEFT', 'CHAT']:
-            if 'game' in self.views: self.views['game'].handle_message(message)
+            elif msg_type in ['ROOM_CREATED', 'ROOM_JOINED', 'OPPONENT_MOVE', 
+                             'GAME_OVER', 'OPPONENT_LEFT', 'CHAT', 'BOARD_STATE']:
+                if 'game' in self.views: self.views['game'].handle_message(message)
 
-        elif msg_type == 'PROFILE_UPDATED':
-            if 'profile' in self.views: self.views['profile'].handle_message(message)
+            elif msg_type == 'PROFILE_UPDATED':
+                if 'profile' in self.views: self.views['profile'].handle_message(message)
 
-        elif msg_type == 'ERROR':
-            err_msg = message.get('message', 'Unknown Error')
-            
-            # Nếu đang ở màn hình login (chưa vào phòng) -> Hiển thị lỗi lên form đăng nhập
-            if self.current_room is None and 'login' in self.views:
-                 self.views['login'].set_status(err_msg, "red")
-                 self.views['login'].set_login_button_state(True)
-            else:
-                # Nếu đang chơi hoặc ở lobby -> Hiện popup
-                messagebox.showerror("Error", err_msg)
+            elif msg_type == 'ERROR':
+                err_msg = message.get('message', 'Unknown Error')
+                
+                # Nếu đang ở màn hình login (chưa vào phòng) -> Hiển thị lỗi lên form đăng nhập
+                if self.current_room is None and 'login' in self.views:
+                     self.views['login'].set_status(err_msg, "red")
+                     self.views['login'].set_login_button_state(True)
+                else:
+                    # Nếu đang chơi hoặc ở lobby -> Hiện popup
+                    messagebox.showerror("Error", err_msg)
+
+        except Exception as e:
+            print(f"❌ Error processing message: {e}")
+            import traceback
+            traceback.print_exc()
 
     def on_login_success(self, message):
         """Handle successful login"""
@@ -203,6 +222,27 @@ class CaroClient:
 
         self.network.start_connection()
 
+    def register(self, username, password, display_name):
+        """Start the registration process."""
+        self.pending_username = username
+        self.pending_password = password
+        self.pending_display_name = display_name
+        self.is_registering = True # Cờ báo hiệu login này là để đăng ký
+        
+        # Disable login/reg button
+        if 'login' in self.views:
+            self.views['login'].set_login_button_state(False)
+
+        # Reset connection logic clone from login
+        try:
+            self.network.disconnect()
+        except:
+            pass
+            
+        self.network = NetworkClient()
+        self.network.set_handler(self.queue_server_message)
+        self.network.start_connection()
+
     def logout(self, send_disconnect=True, redirect_to_login=True):
         """Logout and return to login screen"""
         self.is_logging_out = True
@@ -226,11 +266,19 @@ class CaroClient:
         if redirect_to_login:
             self.show_view('login')
 
-    def create_room(self):
-        self.network.send({'type': 'CREATE_ROOM'})
+    def create_room(self, password=None, time_limit=30):
+        self.network.send({
+            'type': 'CREATE_ROOM',
+            'password': password,
+            'time_limit': time_limit
+        })
 
-    def join_room(self, room_id):
-        self.network.send({'type': 'JOIN_ROOM', 'room_id': room_id})
+    def join_room(self, room_id, password=None):
+        self.network.send({
+            'type': 'JOIN_ROOM', 
+            'room_id': room_id,
+            'password': password
+        })
 
     def send_move(self, x, y):
         self.network.send({'type': 'MOVE', 'x': x, 'y': y, 'room_id': self.current_room})

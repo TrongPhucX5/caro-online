@@ -58,47 +58,74 @@ class NetworkClient:
             self.disconnect()
 
     def receive_messages(self):
+        import codecs
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         buffer = ""
         while self.connected:
             try:
-                data = self.client.recv(4096).decode('utf-8')
-                if not data:
+                # Use raw bytes recv then decode incrementally
+                chunk = self.client.recv(4096)
+                if not chunk:
                     print("Disconnected from server (no data)")
                     self.disconnect()
                     break
                 
+                # Decode chunk safely
+                data = decoder.decode(chunk, final=False)
                 buffer += data
                 
-                # Process buffer for complete JSON objects
-                # A simple split based on braces can be problematic, but we'll adapt
-                # the server's hint of `}{` -> `}|{`
-                while '}{' in buffer:
-                    buffer = buffer.replace('}{', '}|{')
-                
-                messages = buffer.split('|')
-                
-                for i, msg_str in enumerate(messages):
-                    if not msg_str: continue
+                # Logic tách JSON an toàn hơn (đếm ngoặc nhọn)
+                while True:
                     try:
-                        # If it's the last part and it's incomplete, keep it in buffer
-                        if i == len(messages) - 1 and not msg_str.endswith('}'):
-                            buffer = msg_str
+                        # Tìm vị trí start object
+                        start = buffer.find('{')
+                        if start == -1:
+                            buffer = "" # Không có JSON -> Xóa rác
                             break
-
-                        message = json.loads(msg_str)
-                        if self.msg_handler:
-                            self.msg_handler(message)
+                            
+                        # Tìm vị trí end object (đơn giản, giả sử không có lồng phức tạp hoặc string chứa })
+                        # Cách tốt hơn: Đếm ngoặc (Stack-based)
+                        brace_count = 0
+                        json_end = -1
+                        in_string = False
+                        escape = False
                         
-                        if i == len(messages) - 1: # Clear buffer if last msg was processed
-                            buffer = ""
-
-                    except json.JSONDecodeError:
-                        # If a full message fails to decode, it's likely corrupt
-                        print(f"⚠️ Invalid JSON received: {msg_str}")
-                        if i == len(messages) - 1:
-                            buffer = msg_str # Keep potentially incomplete message
-                        else: # discard corrupt message part
-                            pass 
+                        for i, char in enumerate(buffer[start:], start):
+                            if char == '"' and not escape:
+                                in_string = not in_string
+                            elif char == '\\' and in_string:
+                                escape = not escape
+                            elif not escape:
+                                if not in_string:
+                                    if char == '{': brace_count += 1
+                                    elif char == '}': 
+                                        brace_count -= 1
+                                        if brace_count == 0:
+                                            json_end = i
+                                            break
+                            else:
+                                escape = False  # Reset escape for next char
+                                
+                        if json_end != -1:
+                            json_str = buffer[start:json_end+1]
+                            buffer = buffer[json_end+1:]
+                            
+                            try:
+                                message = json.loads(json_str)
+                                if isinstance(message, dict):
+                                    if self.msg_handler:
+                                        self.msg_handler(message)
+                                else:
+                                    print(f"⚠️ Ignored non-dict message: {message}")
+                            except json.JSONDecodeError:
+                                print(f"⚠️ Invalid JSON ignored: {json_str[:50]}...")
+                        else:
+                            # Chưa nhận đủ packet -> Đợi loop sau
+                            break
+                            
+                    except Exception as e:
+                        print(f"Error parsing packet: {e}")
+                        break 
             
             except Exception as e:
                 print(f"❌ Receive error: {e}")
