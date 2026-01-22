@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox
+import os
+from avatar_config import get_avatar_path
 from components.header import Header
 from components.room_list import RoomList
 from components.player_list import PlayerList
@@ -26,6 +28,8 @@ class LobbyView:
         # Biến UI
         self.lbl_display_name = None
         self.lbl_username = None
+        self.lbl_avatar = None
+        self.avatar_image = None
         
         self.create_widgets()
 
@@ -52,8 +56,10 @@ class LobbyView:
         profile_frame = tk.Frame(sidebar, bg=self.colors['sidebar'], pady=30, padx=20)
         profile_frame.pack(fill=tk.X)
         
-        tk.Label(profile_frame, text="👤", font=("Segoe UI", 45), 
-                 bg=self.colors['sidebar'], fg=self.colors['text_gray']).pack()
+        # Avatar Image
+        self.lbl_avatar = tk.Label(profile_frame, text="👤", font=("Segoe UI", 45), 
+                 bg=self.colors['sidebar'], fg=self.colors['text_gray'])
+        self.lbl_avatar.pack()
                  
         self.lbl_display_name = tk.Label(profile_frame, text="Loading...", 
                                          font=("Segoe UI", 14, "bold"), wraplength=220,
@@ -138,8 +144,36 @@ class LobbyView:
     def update_user_info(self):
         d_name = getattr(self.controller, 'display_name', None) or getattr(self.controller, 'username', 'Unknown')
         user = getattr(self.controller, 'username', 'guest')
+        avatar_id = getattr(self.controller, 'avatar_id', 0)
+        
         if self.lbl_display_name: self.lbl_display_name.config(text=d_name)
         if self.lbl_username: self.lbl_username.config(text=f"@{user}")
+        
+        # Load avatar
+        if self.lbl_avatar:
+            rel_path = get_avatar_path(avatar_id)
+            possible_paths = [
+                os.path.join("client", rel_path), 
+                rel_path
+            ]
+            final_path = None
+            for p in possible_paths:
+                if os.path.exists(p):
+                    final_path = p
+                    break
+                    
+            if final_path:
+                try:
+                    img = tk.PhotoImage(file=final_path)
+                    # Resize? Tkinter PhotoImage doesn't resize well. 
+                    # Assuming avatars are pre-sized (96px based on filename).
+                    # If needed subsample: img = img.subsample(2)
+                    self.lbl_avatar.config(image=img, text="", width=96, height=96)
+                    self.avatar_image = img
+                except:
+                     self.lbl_avatar.config(image="", text="??")
+            else:
+                 self.lbl_avatar.config(image="", text="👤")
 
     def handle_message(self, message):
         type = message.get('type')

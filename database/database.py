@@ -17,12 +17,28 @@ class CaroDatabase:
             self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
             self.connection.row_factory = sqlite3.Row  # Return rows as dictionaries
             self.create_tables()
+            self._migrate_db() # Check for new columns
             self.add_default_data()
             print("✅ Database initialized successfully")
         except Exception as e:
             print(f"❌ Database initialization failed: {e}")
             raise
     
+    def _migrate_db(self):
+        """Add new columns to existing tables if missing"""
+        try:
+            cursor = self.connection.cursor()
+            # Check if avatar_id exists in users
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if 'avatar_id' not in columns:
+                print("⚠️ Migrating: Adding avatar_id to users table...")
+                cursor.execute("ALTER TABLE users ADD COLUMN avatar_id INTEGER DEFAULT 0")
+                self.connection.commit()
+                print("✅ Migration successful")
+        except Exception as e:
+            print(f"❌ Migration failed: {e}")
+
     def create_tables(self):
         """Create all necessary tables"""
         cursor = self.connection.cursor()
@@ -35,6 +51,7 @@ class CaroDatabase:
             password_hash TEXT NOT NULL,
             email TEXT,
             display_name TEXT,
+            avatar_id INTEGER DEFAULT 0,  -- New column
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_login TIMESTAMP,
             total_games INTEGER DEFAULT 0,
@@ -46,6 +63,10 @@ class CaroDatabase:
             best_win_streak INTEGER DEFAULT 0
         )
         ''')
+        
+        # ... (Rest of create_tables kept handled by 'pass' or surrounding context if I wasn't replacing the whole block, but here I only replaced up to user table start usually or just the relevant parts.
+        # Wait, the instruction said "Update create_tables". I should probably replace the Users table definition part carefully.
+        # Let's just stick to the specific chunks to minimize overwriting unrelated things.
         
         # Games table
         cursor.execute('''
@@ -183,7 +204,7 @@ class CaroDatabase:
             password_hash = self._hash_password(password)
             
             cursor.execute('''
-            SELECT id, username, email, total_games, wins, losses, draws, score
+            SELECT id, username, email, display_name, avatar_id, total_games, wins, losses, draws, score
             FROM users 
             WHERE username = ? AND password_hash = ?
             ''', (username, password_hash))
@@ -216,7 +237,7 @@ class CaroDatabase:
         try:
             cursor = self.connection.cursor()
             cursor.execute('''
-            SELECT id, username, display_name, score, total_games, wins, losses, draws
+            SELECT id, username, display_name, avatar_id, score, total_games, wins, losses, draws
             FROM users 
             WHERE id = ?
             ''', (user_id,))
@@ -229,7 +250,7 @@ class CaroDatabase:
             print(f"❌ Failed to get user info: {e}")
             return None
 
-    def update_user_profile(self, user_id, display_name=None, new_password=None):
+    def update_user_profile(self, user_id, display_name=None, new_password=None, avatar_id=None):
         """Update user profile"""
         try:
             cursor = self.connection.cursor()
@@ -245,6 +266,10 @@ class CaroDatabase:
                 password_hash = self._hash_password(new_password)
                 updates.append("password_hash = ?")
                 params.append(password_hash)
+                
+            if avatar_id is not None:
+                updates.append("avatar_id = ?")
+                params.append(avatar_id)
             
             if not updates:
                 return False

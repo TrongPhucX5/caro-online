@@ -12,7 +12,8 @@ class UserManager:
             'username': None,
             'user_id': None,
             'room_id': None,
-            'display_name': None # Thêm trường này để cache
+            'display_name': None,
+            'avatar_id': 0 # Default avatar
         }
         
     def get_client(self, client_id):
@@ -56,18 +57,25 @@ class UserManager:
 
             # Lấy thông tin chi tiết (display_name)
             user_info = self.db.get_user_info(result['id'])
-            display_name = user_info.get('display_name', result['username']) if user_info else result['username']
+            if user_info:
+                display_name = user_info.get('display_name') or result['username']
+                avatar_id = user_info.get('avatar_id', 0)
+            else:
+                display_name = result['username']
+                avatar_id = 0
             
             # Lưu vào RAM để dùng sau này (Cache)
             client['username'] = result['username']
             client['user_id'] = result['id']
             client['display_name'] = display_name
+            client['avatar_id'] = avatar_id
             
             # Phản hồi cho Client
             server.send_to_client(client_id, {
                 'type': 'LOGIN_SUCCESS',
                 'message': f"Chào mừng trở lại, {display_name}!",
-                'display_name': display_name
+                'display_name': display_name,
+                'avatar_id': avatar_id
             })
             
             # Gửi dữ liệu cần thiết sau khi login
@@ -93,7 +101,7 @@ class UserManager:
             user_id = reg_result.get('user_id')
             
             # 2. Cập nhật ngay Display Name vào DB
-            self.db.update_user_profile(user_id, display_name=display_name)
+            self.db.update_user_profile(user_id, display_name=display_name, avatar_id=0)
             
             # 3. Tự động Login luôn cho người dùng
             client = self.get_client(client_id)
@@ -101,11 +109,13 @@ class UserManager:
                 client['username'] = username
                 client['user_id'] = user_id
                 client['display_name'] = display_name
+                client['avatar_id'] = 0
             
             server.send_to_client(client_id, {
                 'type': 'LOGIN_SUCCESS',
                 'message': "Đăng ký thành công!",
-                'display_name': display_name
+                'display_name': display_name,
+                'avatar_id': 0
             })
             
             # Gửi dữ liệu bàn chơi
@@ -123,6 +133,7 @@ class UserManager:
         display_name = message.get('display_name', '').strip()
         old_password = message.get('old_password', '').strip()
         new_password = message.get('new_password', '').strip()
+        avatar_id = message.get('avatar_id') # Có thể None nếu không đổi
         
         if not display_name:
             server.send_error(client_id, "Tên hiển thị không được để trống")
@@ -143,20 +154,26 @@ class UserManager:
         success = self.db.update_user_profile(
             user_id=user_id,
             display_name=display_name,
-            new_password=new_password if new_password else None
+            new_password=new_password if new_password else None,
+            avatar_id=avatar_id
         )
         
         if success:
             # Cập nhật Cache trong RAM
             client['display_name'] = display_name
+            if avatar_id is not None:
+                client['avatar_id'] = int(avatar_id)
             
             server.send_to_client(client_id, {
                 'type': 'PROFILE_UPDATED',
-                'message': 'Cập nhật hồ sơ thành công!'
+                'message': 'Cập nhật hồ sơ thành công!',
+                'display_name': display_name,
+                'avatar_id': client['avatar_id']
             })
-            # Thông báo cho mọi người biết mình đổi tên
+            # Thông báo cho mọi người biết mình đổi info
             self.broadcast_online_players(server)
             # Cập nhật lại danh sách phòng (vì tên trong phòng có thể thay đổi)
+            # TODO: Cập nhật avatar trong phòng nếu cần
             server.room_manager.broadcast_room_list(server)
         else:
             server.send_error(client_id, "Lỗi hệ thống: Cập nhật thất bại")
@@ -179,7 +196,8 @@ class UserManager:
                 online_players.append({
                     'username': cdata['username'],
                     'display_name': d_name,
-                    'user_id': cdata['user_id']
+                    'user_id': cdata['user_id'],
+                    'avatar_id': cdata.get('avatar_id', 0)
                 })
         return online_players
         

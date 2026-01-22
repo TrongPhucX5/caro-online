@@ -180,6 +180,7 @@ class CaroClient:
         """Handle successful login"""
         self.username = self.pending_username
         self.display_name = message.get('display_name', self.username)
+        self.avatar_id = message.get('avatar_id', 0) # Store avatar_id
         self.window.title(f"Caro Game - {self.username}")
         
         self.pending_username = None
@@ -192,7 +193,7 @@ class CaroClient:
         self.refresh_all_data()
         
         if hasattr(self.views['profile'], 'load_profile'):
-            self.views['profile'].load_profile(self.username, self.display_name)
+            self.views['profile'].load_profile(self.username, self.display_name, self.avatar_id)
 
     # ================= NETWORK ACTIONS =================
 
@@ -302,12 +303,13 @@ class CaroClient:
     def view_match(self, room_id):
         self.network.send({'type': 'VIEW_MATCH', 'room_id': room_id})
 
-    def update_profile(self, display_name, old_password, new_password):
+    def update_profile(self, display_name, old_password, new_password, avatar_id=None):
         self.network.send({
             'type': 'EDIT_PROFILE',
             'display_name': display_name,
             'old_password': old_password,
-            'new_password': new_password
+            'new_password': new_password,
+            'avatar_id': avatar_id
         })
 
     # ================= GAME STATE =================
