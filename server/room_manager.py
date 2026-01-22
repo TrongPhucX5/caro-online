@@ -9,6 +9,64 @@ class RoomManager:
         self.room_counter = 1
         self.lock = threading.Lock()
         
+        # --- TIMEOUT MONITOR THREAD ---
+        self.running = True
+        self.monitor_thread = threading.Thread(target=self._timeout_loop, daemon=True)
+        self.monitor_thread.start()
+        
+    def set_server(self, server):
+        self.server_instance = server
+
+    def _timeout_loop(self):
+        """Luồng chạy ngầm kiểm tra hết giờ"""
+        import time
+        from server.game_logic import GameLogic
+        
+        while self.running:
+            time.sleep(1) # Kiểm tra mỗi giây
+            
+            if not hasattr(self, 'server_instance'):
+                continue
+
+            try:
+                # Dùng lock để lấy danh sách phòng an toàn
+                current_rooms = []
+                with self.lock:
+                    # Chỉ lấy các phòng đang chơi
+                    for r_id, room in self.rooms.items():
+                        if room['status'] == 'playing':
+                            current_rooms.append(room)
+                
+                # Duyệt qua từng phòng (ngoài lock để tránh treo)
+                now = time.time()
+                for room in current_rooms:
+                    try:
+                        turn_deadline = room.get('turn_deadline')
+                        if turn_deadline and now > turn_deadline:
+                            print(f"⏰ Active Timeout detected in {room['id']}")
+                            
+                            # Xác định người bị hết giờ (là người đang có lượt đi)
+                            # board.current_player: 1 (X) hoặc 2 (O)
+                            # room['players'][0] là X, room['players'][1] là O
+                            current_turn_idx = 0 if room['board'].current_player == 1 else 1
+                            
+                            if len(room['players']) > current_turn_idx:
+                                timeout_player_id = room['players'][current_turn_idx]
+                                
+                                # Đối thủ thắng
+                                opponent_idx = 1 - current_turn_idx
+                                if len(room['players']) > opponent_idx:
+                                    winner_id = room['players'][opponent_idx]
+                                    
+                                    # Gọi GameLogic để xử lý thắng thua
+                                    # Cần một instance 'server' để truyền vào.
+                                    GameLogic.handle_game_over(room, winner_id, self.server_instance)
+                    except Exception as e_inner:
+                         print(f"Error checking room {room.get('id')}: {e_inner}")
+
+            except Exception as e:
+                print(f"Error in timeout loop: {e}")
+        
     def handle_message(self, client_id, message, server):
         msg_type = message.get('type')
         

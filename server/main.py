@@ -25,6 +25,7 @@ class CaroServer:
         # Khởi tạo managers
         self.user_manager = UserManager(self.db)
         self.room_manager = RoomManager()
+        self.room_manager.set_server(self)
         
         self.client_counter = 1
         self.running = False
