@@ -579,7 +579,43 @@ class GameView:
             # Ẩn nút chức năng
             pass
 
+        elif msg_type == 'RESUME_GAME':
+            room_id = message.get('room_id')
+            player_symbol = message.get('player_symbol')
+            is_my_turn = message.get('is_my_turn')
+            moves = message.get('moves', [])
+            
+            self.controller.time_limit = message.get('time_limit', 30)
+            
+            # Restore state
+            self.controller.set_game_state(room_id, player_symbol, True)
+            
+            # Determine current turn
+            if is_my_turn:
+                self.controller.current_turn = player_symbol
+            else:
+                self.controller.current_turn = 'O' if player_symbol == 'X' else 'X'
+                
+            # Update UI
+            color = self.colors['x_color'] if player_symbol == 'X' else self.colors['o_color']
+            self.player_label.config(text=f"Bạn cầm quân: {player_symbol}", fg=color)
+            self.game_status.config(text="Đã khôi phục trận đấu", fg=self.colors['primary'])
+            
+            # Remove old overlay
+            if self.overlay:
+                self.overlay.destroy()
+                self.overlay = None
+
+            self.draw_board()
+            for move in moves:
+                self.draw_piece(move['x'], move['y'], move['val'])
+                
+            self.update_turn_indicator()
+            self.start_timer()
+            self.add_chat_message("Hệ thống", "Bạn đã kết nối lại vào trận đấu.")
+
         elif msg_type == 'SYNC_TIMER':
+
             self.remaining_time = message.get('remaining_time', 0)
             self.update_timer_display()
             # Nếu đang playing thì chạy tiếp

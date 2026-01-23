@@ -1,10 +1,13 @@
 import json
+import time
 
 class UserManager:
     def __init__(self, db):
         self.db = db
         # client_id -> {socket, username, user_id, room_id, display_name}
         self.clients = {}  
+        self.disconnected_sessions = {} # user_id -> {data, timestamp}
+
         
     def add_client(self, client_id, socket):
         self.clients[client_id] = {
@@ -13,7 +16,9 @@ class UserManager:
             'user_id': None,
             'room_id': None,
             'display_name': None,
-            'avatar_id': 0 # Default avatar
+            'display_name': None,
+            'avatar_id': 0, # Default avatar
+            'last_activity': time.time() # For Heartbeat
         }
         
     def get_client(self, client_id):
@@ -26,6 +31,71 @@ class UserManager:
             except: 
                 pass
             del self.clients[client_id]
+
+    import threading
+    def handle_disconnect(self, client_id, server):
+        """Handle logic when a client disconnects (save session if in game)"""
+        client = self.get_client(client_id)
+        if not client: return
+
+        room_id = client.get('room_id')
+        user_id = client.get('user_id')
+
+        # Logic Level 1: Check if in game -> Save session
+        game_saved = False
+        if room_id and user_id:
+            # Check if room is actually playing? (Ask room manager or assume yes if room_id set)
+            # Better to assume yes, room manager filters anyway.
+            print(f"⚠️ User {client['username']} disconnected during game. Saving session...")
+            
+            self.disconnected_sessions[user_id] = {
+                'data': client.copy(),
+                'disconnect_time': time.time(),
+                'old_client_id': client_id
+            }
+            # Don't save socket object obviously
+            if 'socket' in self.disconnected_sessions[user_id]['data']:
+                del self.disconnected_sessions[user_id]['data']['socket']
+                
+            # Notify RoomManager to FREEZE/PAUSE player, NOT KICK
+            server.room_manager.handle_player_disconnected_gracefully(client_id, room_id, server)
+            game_saved = True
+
+            # Schedule cleanup after 60s
+            def cleanup_task():
+                time.sleep(60)
+                if user_id in self.disconnected_sessions:
+                    print(f"⏰ Session expired for {user_id}. Cleaning up...")
+                    # Now force kick
+                    # We need a way to tell room manager to kick "old_client_id"
+                    # But wait, room might still have old_client_id or be empty.
+                    server.room_manager.leave_room(client_id, room_id, server) 
+                    del self.disconnected_sessions[user_id]
+
+            threading.Thread(target=cleanup_task, daemon=True).start()
+
+        # If not game saved, do normal kick (only if not saved!)
+        if not game_saved:
+            if room_id:
+                 server.room_manager.leave_room(client_id, room_id, server)
+        
+        # Always remove from active clients
+        self.remove_client(client_id)
+        self.broadcast_online_players(server)
+
+
+    def update_activity(self, client_id):
+        if client_id in self.clients:
+            self.clients[client_id]['last_activity'] = time.time()
+            
+    def check_inactive_clients(self, timeout_seconds=15):
+        """Returns a list of client_ids that are inactive"""
+        now = time.time()
+        inactive_ids = []
+        for cid, data in self.clients.items():
+            if now - data['last_activity'] > timeout_seconds:
+                inactive_ids.append(cid)
+        return inactive_ids
             
     def handle_message(self, client_id, message, server):
         msg_type = message.get('type')
@@ -81,6 +151,22 @@ class UserManager:
             # Gửi dữ liệu cần thiết sau khi login
             server.room_manager.send_room_list(client_id, server)
             self.broadcast_online_players(server)
+
+            # --- LEVEL 1: CHECK RESUME GAME ---
+            if result['id'] in self.disconnected_sessions:
+                print(f"🔄 Found disconnected session for {result['username']}. Restoring...")
+                saved_session = self.disconnected_sessions.pop(result['id'])
+                old_data = saved_session['data']
+                room_id = old_data.get('room_id')
+                old_client_id = saved_session['old_client_id']
+                
+                # Restore runtime data
+                client['room_id'] = room_id
+                
+                if room_id:
+                    server.room_manager.reconnect_player(old_client_id, client_id, room_id, server)
+            # ----------------------------------
+
             
         else:
             server.send_error(client_id, "Sai tên đăng nhập hoặc mật khẩu!")

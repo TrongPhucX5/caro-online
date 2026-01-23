@@ -35,12 +35,16 @@ class CaroClient:
         # For async login
         self.pending_username = None
         self.pending_password = None
+        self.saved_password = None # Store password for auto-reconnect
+
 
         # Cờ kiểm soát logout (để tránh hiện popup lỗi khi tự bấm thoát)
         self.is_logging_out = False
+        self.is_reconnecting_login = False # Flag to suppress errors during auto-reconnect
         
         # Cờ kiểm soát hành động (tránh vào phòng khi đã hủy)
         self.pending_action = None # 'create', 'join', 'quick_match'
+
 
         # Initialize views
         self.views = {}
@@ -110,24 +114,29 @@ class CaroClient:
                 
                 # Kiểm tra xem đang Login hay Register
                 if getattr(self, 'is_registering', False):
-                    # Gửi lệnh Đăng Ký
-                    print("Sending REGISTER info...")
-                    self.network.send({
-                        'type': 'REGISTER', 
-                        'username': self.pending_username, 
-                        'password': self.pending_password,
-                        'display_name': self.pending_display_name
-                    })
-                    # Reset cờ
-                    self.is_registering = False
+                    if self.pending_username:
+                        # Gửi lệnh Đăng Ký
+                        print("Sending REGISTER info...")
+                        self.network.send({
+                            'type': 'REGISTER', 
+                            'username': self.pending_username, 
+                            'password': self.pending_password,
+                            'display_name': self.pending_display_name
+                        })
+                        # Reset cờ
+                        self.is_registering = False
                 else:
-                    # Gửi lệnh Đăng Nhập (như cũ)
-                    print("Sending LOGIN info...")
-                    self.network.send({
-                        'type': 'LOGIN', 
-                        'username': self.pending_username, 
-                        'password': self.pending_password
-                    })
+                    # Gửi lệnh Đăng Nhập CHỈ KHI có thông tin pending (User bấm nút)
+                    # Nếu pending là None -> Đây là reconnect -> Bỏ qua, để RECONNECTED xử lý
+                    if self.pending_username:
+                        print("Sending LOGIN info...")
+                        self.network.send({
+                            'type': 'LOGIN', 
+                            'username': self.pending_username, 
+                            'password': self.pending_password
+                        })
+                    else:
+                        print("Connection restored. Waiting for RECONNECTED event...")
             
             elif msg_type == 'CONNECTION_FAILED':
                 # Nếu đang ở màn hình login thì hiển thị lỗi lên giao diện
@@ -140,12 +149,28 @@ class CaroClient:
             elif msg_type == 'DISCONNECTED':
                 # CHỈ HIỆN THÔNG BÁO NẾU KHÔNG PHẢI DO NGƯỜI DÙNG BẤM LOGOUT
                 if not self.is_logging_out:
-                    messagebox.showinfo("Disconnected", "Mất kết nối tới máy chủ.")
-                    self.show_view('login')
+                    print("⚠️ Mất kết nối. Đang thử kết nối lại...")
+                    # KHÔNG gọi show_view('login') để giữ lại session (username/pass) cho auto-login
+                    if self.current_room is None and 'login' in self.views:
+                         self.views['login'].set_status("Mất kết nối. Đang kết nối lại...", "red")
                 self.is_logging_out = False
 
 
+            elif msg_type == 'RECONNECTED':
+                print("🔄 Network reconnected! Attempting to re-login...")
+                # Nếu đã từng login, tự động login lại
+                if self.username and self.saved_password:
+                     self.is_reconnecting_login = True
+                     self.network.send({
+                        'type': 'LOGIN', 
+                        'username': self.username, 
+                        'password': self.saved_password
+                    })
+                else:
+                    self.show_view('login')
+
             elif msg_type == 'LOGIN_SUCCESS':
+                self.is_reconnecting_login = False
                 self.on_login_success(message)
 
             elif msg_type in ['ROOM_LIST', 'ONLINE_PLAYERS']:
@@ -200,7 +225,24 @@ class CaroClient:
                 if 'profile' in self.views: 
                     self.views['profile'].handle_message(message)
 
+            elif msg_type == 'RESUME_GAME':
+                print("🎮 Resuming game...")
+                self.show_view('game')
+                if 'game' in self.views:
+                     self.views['game'].handle_message(message)
+
+
             elif msg_type == 'ERROR':
+                # Nếu lỗi xảy ra khi đang tự động đăng nhập lại -> Không hiện popup, out ra login luôn
+                if getattr(self, 'is_reconnecting_login', False):
+                    self.is_reconnecting_login = False
+                    print(f"Auto-login failed: {message.get('message')}")
+                    # Quay về màn hình login và báo lỗi ở đó
+                    self.logout(send_disconnect=False, redirect_to_login=True)
+                    if 'login' in self.views:
+                         self.views['login'].set_status("Phiên đăng nhập hết hạn", "red")
+                    return
+
                 err_msg = message.get('message', 'Unknown Error')
                 
                 # Nếu đang ở màn hình login (chưa vào phòng) -> Hiển thị lỗi lên form đăng nhập
@@ -218,7 +260,11 @@ class CaroClient:
 
     def on_login_success(self, message):
         """Handle successful login"""
-        self.username = self.pending_username
+        # Chỉ cập nhật username/password nếu đây là login thường (có pending)
+        if self.pending_username:
+            self.username = self.pending_username
+            self.saved_password = self.pending_password
+            
         self.display_name = message.get('display_name', self.username)
         self.avatar_id = message.get('avatar_id', 0) # Store avatar_id
         self.window.title(f"Caro Game - {self.username}")
@@ -253,7 +299,7 @@ class CaroClient:
 
         # --- FIX LỖI: TẠO MỚI SOCKET KHI LOGIN LẠI ---
         try:
-            self.network.disconnect()
+            self.network.disconnect(manual=True)
         except:
             pass
             
@@ -276,7 +322,7 @@ class CaroClient:
 
         # Reset connection logic clone from login
         try:
-            self.network.disconnect()
+            self.network.disconnect(manual=True)
         except:
             pass
             
@@ -290,11 +336,12 @@ class CaroClient:
         
         if send_disconnect:
             try:
-                self.network.disconnect()
+                self.network.disconnect(manual=True)
             except:
                 pass
                 
         self.username = None
+        self.saved_password = None
         self.display_name = None
         self.current_room = None
         self.game_active = False
@@ -392,7 +439,7 @@ class CaroClient:
         """Handle window close"""
         self.is_logging_out = True # Tránh lỗi khi đóng app
         try:
-            self.network.disconnect()
+            self.network.disconnect(manual=True)
         except:
             pass
         self.window.destroy()

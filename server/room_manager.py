@@ -153,9 +153,12 @@ class RoomManager:
                 'owner': client_id,
                 'password': password,
                 'time_limit': time_limit,
-                'turn_deadline': None, 
-                'spectators': [],
-                'match_pending': False # New flag
+                'turn_deadline': None,  # Will be set when game starts
+                'spectators': [],  # List of spectator client_ids
+                'match_pending': False, # New flag
+                'is_frozen': False, # Pause game flag
+                'saved_remaining_time': 0 # For pausing timer
+
             }
             self.room_owners[room_id] = client_id
         
@@ -406,3 +409,125 @@ class RoomManager:
             
     def handle_client_disconnect(self, client_id, room_id, server):
         self.leave_room(client_id, room_id, server)
+
+    def handle_player_disconnected_gracefully(self, client_id, room_id, server):
+        """Called when a player disconnects but might reconnect. Do NOT remove from room."""
+        with self.lock:
+            if room_id not in self.rooms: return
+            room = self.rooms[room_id]
+            
+            # --- LEVEL 2: FREEZE ROOM ---
+            if not room['is_frozen'] and room.get('turn_deadline'):
+                import time
+                room['is_frozen'] = True
+                room['saved_remaining_time'] = room['turn_deadline'] - time.time()
+                room['turn_deadline'] = None # Stop timer check
+                print(f"❄️ Room {room_id} frozen. Time left: {room['saved_remaining_time']:.1f}s")
+            # -----------------------------
+            
+            # Notify opponent
+            opponent_id = None
+            for pid in room['players']:
+                if pid != client_id:
+                    opponent_id = pid
+                    break
+            
+            if opponent_id:
+                server.send_to_client(opponent_id, {
+                    'type': 'CHAT',
+                    'sender': 'System',
+                    'message': 'Đối thủ đã mất kết nối. Game tạm dừng (60s)...'
+                })
+                # Send PAUSE signal possibly? Or just chat is enough.
+                print(f"Room {room_id}: Player {client_id} disconnected (Grace Period).")
+
+    def reconnect_player(self, old_client_id, new_client_id, room_id, server):
+        """Restore player connection to the room"""
+        with self.lock:
+            if room_id not in self.rooms:
+                 server.send_error(new_client_id, "Phòng chơi đã kết thúc hoặc không tồn tại.")
+                 return
+            
+            room = self.rooms[room_id]
+            
+            # --- LEVEL 2: UNFREEZE ROOM ---
+            if room['is_frozen']:
+                import time
+                room['is_frozen'] = False
+                # Restore deadline
+                room['turn_deadline'] = time.time() + room.get('saved_remaining_time', 30) + 2 # +2s buffer
+                print(f"🔥 Room {room_id} unfrozen. New deadline in {room.get('saved_remaining_time'):.1f}s")
+            # ------------------------------
+
+            # 1. Update players list: Swap old_id -> new_id
+            if old_client_id in room['players']:
+                # Find index and replace
+                idx = room['players'].index(old_client_id)
+                room['players'][idx] = new_client_id
+            else:
+                # Fallback: Just append if not full? No, must replace.
+                # If old_id not found, maybe already replaced? Or logic error.
+                print(f"⚠️ Reconnect warning: Old ID {old_client_id} not found in room {room_id}")
+                # Try to find empty slot? No, just force add if < 2, else error
+                if new_client_id not in room['players']:
+                    room['players'].append(new_client_id)
+
+            # Update owner if needed
+            if room['owner'] == old_client_id:
+                room['owner'] = new_client_id
+                self.room_owners[room_id] = new_client_id
+                
+            print(f"✅ Player {old_client_id} -> {new_client_id} reconnected to room {room_id}")
+
+            # 2. Get Game State
+            board_state = []
+            symbols = {1: 'X', 2: 'O'}
+            for r in range(15):
+                for c in range(15):
+                    piece_val = room['board'].board[r][c]
+                    if piece_val != 0:
+                         board_state.append({'x': c, 'y': r, 'val': symbols.get(piece_val, '?')})
+            
+            # Determine symbol
+            # Index 0 is X, Index 1 is O
+            # Check if new_client_id is at index 0 or 1
+            idx = 0
+            if new_client_id in room['players']:
+                idx = room['players'].index(new_client_id)
+            
+            my_symbol = 'X' if idx == 0 else 'O'
+            is_my_turn = (room['board'].current_player == 1 and my_symbol == 'X') or \
+                         (room['board'].current_player == 2 and my_symbol == 'O')
+
+            # 3. Send RESUME_GAME to reconnected user
+            server.send_to_client(new_client_id, {
+                'type': 'RESUME_GAME',
+                'room_id': room_id,
+                'player_symbol': my_symbol,
+                'is_my_turn': is_my_turn,
+                'moves': board_state,
+                'time_limit': room['time_limit']
+            })
+            
+            # Send updated timer to BOTH players (sync)
+            remaining = int(room['saved_remaining_time']) if 'saved_remaining_time' in room else 30
+            
+            # 4. Notify Opponent
+            opponent_id = room['players'][1-idx] if len(room['players']) > 1 else None
+            if opponent_id:
+                 server.send_to_client(opponent_id, {
+                    'type': 'CHAT',
+                    'sender': 'System',
+                    'message': 'Đối thủ đã kết nối lại! Trận đấu tiếp tục.'
+                })
+                 # Resync timer for opponent too
+                 server.send_to_client(opponent_id, {
+                    'type': 'SYNC_TIMER',
+                    'remaining_time': remaining
+                 })
+                 
+            # Resync timer for self
+            server.send_to_client(new_client_id, {
+                'type': 'SYNC_TIMER',
+                'remaining_time': remaining
+            })

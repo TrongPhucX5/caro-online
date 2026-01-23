@@ -42,6 +42,11 @@ class GameLogic:
             GameLogic.handle_game_over(room, room['players'][1 - p_idx], server) # Opponent wins
             return
             
+        # Check Freeze (Pause)
+        if room.get('is_frozen'):
+            server.send_error(client_id, "Game đang tạm dừng chờ đối thủ kết nối lại.")
+            return
+            
         # Check if it's the player's turn
         # p_idx is 0 for player 1 (X), 1 for player 2 (O)
         # board.current_player is 1 for X, 2 for O

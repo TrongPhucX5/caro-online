@@ -104,11 +104,14 @@ class ProfileView:
         """Load profile data"""
         self.profile_username.config(state="normal")
         self.profile_username.delete(0, tk.END)
-        self.profile_username.insert(0, username)
+        if username:
+            self.profile_username.insert(0, str(username))
         self.profile_username.config(state="readonly")
         
         self.profile_display.delete(0, tk.END)
-        self.profile_display.insert(0, display_name or username)
+        val = display_name or username
+        if val:
+            self.profile_display.insert(0, str(val))
         
         self.old_pass_entry.delete(0, tk.END)
         self.new_pass_entry.delete(0, tk.END)
