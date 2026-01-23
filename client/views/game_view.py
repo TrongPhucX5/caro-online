@@ -1,6 +1,7 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from sound_manager import SoundManager
+from utils.chat_history import ChatHistoryManager
 
 class GameView:
     def __init__(self, parent, controller):
@@ -29,6 +30,9 @@ class GameView:
         self.turn_indicator = None
         self.overlay = None # Lưu overlay kết quả để xóa khi cần
         self.timer_id = None
+        
+        # Chat History Manager
+        self.chat_history = None
         
         self.create_widgets()
         
@@ -108,6 +112,17 @@ class GameView:
         tk.Label(chat_card, text="Trò chuyện", font=("Segoe UI", 11, "bold"), bg='white').pack(anchor='w')
         tk.Frame(chat_card, bg=self.colors['border'], height=1).pack(fill=tk.X, pady=5)
         
+        # Chat controls (Load History & Clear)
+        chat_ctrl_frame = tk.Frame(chat_card, bg='white')
+        chat_ctrl_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        tk.Button(chat_ctrl_frame, text="📂 Lịch sử", command=self.load_chat_history,
+                 bg='#e0f2fe', fg='#0369a1', relief=tk.FLAT, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(chat_ctrl_frame, text="🗑️ Xóa", command=self.clear_chat_display,
+                 bg='#fee2e2', fg='#dc2626', relief=tk.FLAT, font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(chat_ctrl_frame, text="💾 Xuất", command=self.export_chat_history,
+                 bg='#dcfce7', fg='#16a34a', relief=tk.FLAT, font=("Segoe UI", 8)).pack(side=tk.LEFT)
+        
         self.chat_display = tk.Text(chat_card, state=tk.DISABLED, bg='#f9fafb', fg='#374151',
                                     font=("Segoe UI", 9), relief=tk.FLAT, padx=5, pady=5)
         self.chat_display.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
@@ -115,12 +130,20 @@ class GameView:
         input_frame = tk.Frame(chat_card, bg='white')
         input_frame.pack(fill=tk.X)
         
+        # Emoji Button
+        emoji_btn = tk.Button(input_frame, text="😊", command=self.show_emoji_picker,
+                             bg='#fef3c7', fg='#000', relief=tk.FLAT, width=3, font=("Segoe UI", 10))
+        emoji_btn.pack(side=tk.LEFT, padx=(0, 5))
+        
         self.chat_input = tk.Entry(input_frame, font=("Segoe UI", 10), relief=tk.SOLID, bd=1)
         self.chat_input.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
         self.chat_input.bind("<Return>", self.send_chat)
         
         tk.Button(input_frame, text="Gửi", command=self.send_chat,
                   bg=self.colors['primary'], fg='white', relief=tk.FLAT).pack(side=tk.RIGHT, padx=(5, 0))
+        
+        # Emoji Picker Window (Hidden by default)
+        self.emoji_window = None
 
     # --- HÀM VẼ ---
     def draw_board(self):
@@ -226,6 +249,78 @@ class GameView:
             self.add_chat_message("Bạn", msg)
             self.chat_input.delete(0, tk.END)
             self.controller.send_chat(msg)
+    
+    def show_emoji_picker(self):
+        """Hiển thị popup chọn emoji"""
+        if self.emoji_window and self.emoji_window.winfo_exists():
+            self.emoji_window.destroy()
+            return
+            
+        # Tạo Toplevel window cho emoji picker
+        self.emoji_window = tk.Toplevel(self.frame)
+        self.emoji_window.title("Chọn Emoji")
+        self.emoji_window.geometry("320x220")
+        self.emoji_window.resizable(False, False)
+        self.emoji_window.configure(bg='white')
+        
+        # Danh sách emoji phổ biến
+        emojis = [
+            '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
+            '🙂', '😊', '😇', '😍', '🥰', '😘', '😗', '😙',
+            '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭',
+            '🤔', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄',
+            '😬', '🤥', '😌', '😔', '😪', '😴', '😷', '🤒',
+            '😎', '🤓', '🧐', '😕', '😟', '🙁', '😮', '😯',
+            '😲', '😳', '🥺', '😦', '😧', '😨', '😰', '😥',
+            '😢', '😭', '😱', '😖', '😣', '😞', '😓', '😩',
+            '👍', '👎', '👏', '🙌', '👌', '✌️', '🤞', '🤝',
+            '💪', '🙏', '✨', '🎉', '🎊', '🏆', '🎯', '🎮',
+            '❤️', '💕', '💖', '💗', '💝', '😤', '😡', '🤬'
+        ]
+        
+        # Container với scroll
+        canvas = tk.Canvas(self.emoji_window, bg='white', highlightthickness=0)
+        scrollbar = tk.Scrollbar(self.emoji_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='white')
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Tạo grid buttons cho emoji
+        row, col = 0, 0
+        for emoji in emojis:
+            btn = tk.Button(scrollable_frame, text=emoji, font=("Segoe UI", 16),
+                           bg='white', relief=tk.FLAT, width=2, height=1,
+                           command=lambda e=emoji: self.insert_emoji(e))
+            btn.grid(row=row, column=col, padx=2, pady=2)
+            
+            col += 1
+            if col >= 8:  # 8 emoji per row
+                col = 0
+                row += 1
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Đặt vị trí gần button emoji
+        self.emoji_window.transient(self.frame)
+        self.emoji_window.grab_set()
+        
+    def insert_emoji(self, emoji):
+        """Chèn emoji vào chat input"""
+        current_pos = self.chat_input.index(tk.INSERT)
+        self.chat_input.insert(current_pos, emoji)
+        self.chat_input.focus_set()
+        
+        # Đóng emoji picker
+        if self.emoji_window:
+            self.emoji_window.destroy()
+            self.emoji_window = None
             
     def add_chat_message(self, sender, msg):
         self.chat_display.config(state=tk.NORMAL)
@@ -234,6 +329,68 @@ class GameView:
         self.chat_display.insert(tk.END, f"{msg}\n")
         self.chat_display.see(tk.END)
         self.chat_display.config(state=tk.DISABLED)
+        
+        # Lưu vào lịch sử nếu có chat_history manager
+        if self.chat_history and self.controller.current_room:
+            self.chat_history.save_message(self.controller.current_room, sender, msg)
+    
+    def load_chat_history(self):
+        """Load lịch sử chat từ file"""
+        if not self.controller.current_room or not self.controller.username:
+            messagebox.showinfo("Thông báo", "Không có phòng hoặc chưa đăng nhập!")
+            return
+            
+        if not self.chat_history:
+            self.chat_history = ChatHistoryManager(self.controller.username)
+            
+        history = self.chat_history.load_history(self.controller.current_room)
+        
+        if not history:
+            messagebox.showinfo("Lịch sử chat", "Không có lịch sử chat nào được lưu.")
+            return
+            
+        # Hiển thị trong chat display
+        self.chat_display.config(state=tk.NORMAL)
+        self.chat_display.insert(tk.END, "\n=== Lịch sử chat đã tải ===\n", "system")
+        
+        for msg in history[-20:]:  # Chỉ hiển thị 20 tin nhắn gần nhất
+            timestamp = msg.get('timestamp', '')
+            sender = msg.get('sender', 'Unknown')
+            message = msg.get('message', '')
+            self.chat_display.insert(tk.END, f"[{timestamp}] {sender}: {message}\n")
+            
+        self.chat_display.insert(tk.END, "=" * 30 + "\n\n", "system")
+        self.chat_display.see(tk.END)
+        self.chat_display.config(state=tk.DISABLED)
+        
+    def clear_chat_display(self):
+        """Xóa nội dung chat hiển thị"""
+        if messagebox.askyesno("Xóa chat", "Xóa toàn bộ nội dung chat hiện tại?"):
+            self.chat_display.config(state=tk.NORMAL)
+            self.chat_display.delete(1.0, tk.END)
+            self.chat_display.config(state=tk.DISABLED)
+            
+    def export_chat_history(self):
+        """Export lịch sử chat ra file text"""
+        if not self.controller.current_room or not self.controller.username:
+            messagebox.showinfo("Thông báo", "Không có phòng hoặc chưa đăng nhập!")
+            return
+            
+        if not self.chat_history:
+            self.chat_history = ChatHistoryManager(self.controller.username)
+            
+        # Chọn nơi lưu file
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=f"chat_room_{self.controller.current_room}.txt"
+        )
+        
+        if filepath:
+            if self.chat_history.export_history(self.controller.current_room, filepath):
+                messagebox.showinfo("Thành công", f"Đã xuất lịch sử chat ra:\n{filepath}")
+            else:
+                messagebox.showerror("Lỗi", "Không thể xuất lịch sử chat!")
 
     def update_turn_indicator(self):
         state = self.controller.get_game_state()
@@ -361,6 +518,11 @@ class GameView:
             self.game_status.config(text=f"Phòng chờ...", fg=self.colors['text_dark'])
             self.turn_indicator.config(text="⏳ Đang đợi người vào...", fg='gray')
             self.timer_label.config(text="--") # Reset timer label
+            
+            # Initialize chat history for this room
+            if self.controller.username:
+                self.chat_history = ChatHistoryManager(self.controller.username)
+            
             self.controller.show_view('game')
             
         elif msg_type == 'ROOM_JOINED':
@@ -386,6 +548,10 @@ class GameView:
             self.draw_board()
             self.update_turn_indicator()
             self.start_timer() # Start Timer
+            
+            # Initialize chat history for this room
+            if self.controller.username:
+                self.chat_history = ChatHistoryManager(self.controller.username)
             
             self.add_chat_message("Hệ thống", f"Phòng: {', '.join(players)}")
             self.controller.show_view('game')
