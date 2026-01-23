@@ -139,10 +139,6 @@ class RoomManager:
     def decline_match(self, client_id, room_id, server):
         # Deprecated: No double confirmation anymore
         pass
-            })
-            
-            # Client B (pending_opp) cần reset trạng thái UI về searching? 
-            # Client A (owner) vẫn ở trong phòng waiting, cần reset UI ve waiting
             
     def create_room(self, client_id, server, password=None, time_limit=30, is_quick_match=False):
         room_id = f"room_{self.room_counter}"

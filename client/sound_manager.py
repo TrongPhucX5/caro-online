@@ -1,35 +1,65 @@
 import winsound
 import threading
+import os
 
 class SoundManager:
+    # Đường dẫn đến thư mục sounds
+    SOUND_DIR = os.path.join(os.path.dirname(__file__), 'assets', 'sounds')
+    
     @staticmethod
     def _play(sound_type):
         """Chạy âm thanh trong luồng riêng để không chặn UI"""
         def run():
             try:
-                if sound_type == 'click':
-                    # Âm thanh cộc
-                    winsound.Beep(440, 50) 
-                elif sound_type == 'move_x':
-                    # Âm thanh đặt X (cao)
-                    winsound.Beep(600, 100)
-                elif sound_type == 'move_o':
-                    # Âm thanh đặt O (trầm)
-                    winsound.Beep(300, 100)
-                elif sound_type == 'win':
-                    # Nhạc thắng
-                    winsound.Beep(523, 200) # C5
-                    winsound.Beep(659, 200) # E5
-                    winsound.Beep(784, 400) # G5
-                elif sound_type == 'lose':
-                    # Nhạc thua
-                    winsound.Beep(784, 200)
-                    winsound.Beep(659, 200)
-                    winsound.Beep(523, 400)
-                elif sound_type == 'notify':
-                    # Thông báo
-                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
-            except:
+                # Kiểm tra xem có file âm thanh thật không
+                sound_file = os.path.join(SoundManager.SOUND_DIR, f"{sound_type}.wav")
+                print(f"[SOUND] Trying to play: {sound_file}")
+                print(f"[SOUND] File exists: {os.path.exists(sound_file)}")
+                
+                if os.path.exists(sound_file):
+                    # Phát file âm thanh thật - dùng SND_NOSTOP để không bị ghi đè
+                    print(f"[SOUND] Playing {sound_type}.wav...")
+                    winsound.PlaySound(sound_file, winsound.SND_FILENAME)
+                    print(f"[SOUND] Done playing {sound_type}.wav")
+                else:
+                    print(f"[SOUND] File not found, using beep for {sound_type}")
+                    # Fallback về beep nếu không có file
+                    if sound_type == 'click':
+                        winsound.Beep(800, 100) 
+                    elif sound_type == 'move_x':
+                        winsound.Beep(1000, 200)
+                    elif sound_type == 'move_o':
+                        winsound.Beep(250, 200)
+                    elif sound_type == 'win':
+                        winsound.Beep(523, 200)  # C5
+                        winsound.Beep(659, 200)  # E5
+                        winsound.Beep(784, 200)  # G5
+                        winsound.Beep(1047, 400) # C6
+                        
+                        # Tiếng vỗ tay
+                        import time
+                        time.sleep(0.1)
+                        for _ in range(3):
+                            winsound.Beep(200, 30)
+                            time.sleep(0.02)
+                        time.sleep(0.15)
+                        for _ in range(3):
+                            winsound.Beep(200, 30)
+                            time.sleep(0.02)
+                        time.sleep(0.15)
+                        for _ in range(6):
+                            winsound.Beep(200, 30)
+                            time.sleep(0.02)
+                    elif sound_type == 'lose':
+                        winsound.Beep(784, 300)
+                        winsound.Beep(659, 300)
+                        winsound.Beep(523, 300)
+                        winsound.Beep(392, 600)
+                    elif sound_type == 'notify':
+                        winsound.Beep(800, 150)
+                        winsound.Beep(1000, 150)
+            except Exception as e:
+                print(f"[SOUND] Error: {e}")
                 pass
         
         threading.Thread(target=run, daemon=True).start()
