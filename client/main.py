@@ -189,7 +189,16 @@ class CaroClient:
                         self.show_view('game')
 
             elif msg_type == 'PROFILE_UPDATED':
-                if 'profile' in self.views: self.views['profile'].handle_message(message)
+                # Update App State
+                self.display_name = message.get('display_name', self.display_name)
+                self.avatar_id = message.get('avatar_id', self.avatar_id)
+                
+                # Update UI
+                if 'lobby' in self.views:
+                    self.views['lobby'].update_user_info()
+                    
+                if 'profile' in self.views: 
+                    self.views['profile'].handle_message(message)
 
             elif msg_type == 'ERROR':
                 err_msg = message.get('message', 'Unknown Error')
