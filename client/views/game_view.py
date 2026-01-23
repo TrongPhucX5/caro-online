@@ -276,6 +276,12 @@ class GameView:
         elif result_type == 'LOSE':
             text, color, msg = "💀 THẤT BẠI!", "#ef4444", "Đừng buồn, thử lại nào!"
             SoundManager.play_lose()
+        elif result_type == 'SPECTATOR':
+            if winner == 'Draw':
+                text, color, msg = "🤝 TRẬN ĐẤU KẾT THÚC!", "#f59e0b", "Hai bên hòa nhau!"
+            else:
+                text, color, msg = "🏁 TRẬN ĐẤU KẾT THÚC!", "#2563eb", f"Người thắng: {winner}"
+            SoundManager.play_notify()
         else:
             text, color, msg = "🤝 HÒA CỜ!", "#f59e0b", "Trận đấu cân não!"
             SoundManager.play_notify()
@@ -286,15 +292,20 @@ class GameView:
         btn_frame = tk.Frame(inner, bg='white')
         btn_frame.pack(fill=tk.X)
         
-        tk.Button(btn_frame, text="🔄 Chơi lại", 
-                  command=self.request_rematch,
-                  bg=self.colors['primary'], fg='white', font=("Segoe UI", 9, "bold"),
-                  relief=tk.FLAT, width=10, height=2).pack(side=tk.LEFT, padx=5)
+        # Chỉ hiện nút Chơi lại nếu không phải khán giả
+        if result_type != 'SPECTATOR':
+            tk.Button(btn_frame, text="🔄 Chơi lại", 
+                    command=self.request_rematch,
+                    bg=self.colors['primary'], fg='white', font=("Segoe UI", 9, "bold"),
+                    relief=tk.FLAT, width=10, height=2).pack(side=tk.LEFT, padx=5)
+        else:
+            # Nếu là khán giả, nút Thoát căn giữa hoặc full
+            pass 
                   
         tk.Button(btn_frame, text="🚪 Thoát", 
                   command=lambda: [result_box.destroy(), self.leave_game()],
                   bg="#e5e7eb", fg="black", font=("Segoe UI", 9, "bold"),
-                  relief=tk.FLAT, width=10, height=2).pack(side=tk.RIGHT, padx=5)
+                  relief=tk.FLAT, width=10, height=2).pack(side=tk.RIGHT if result_type != 'SPECTATOR' else tk.TOP, padx=5, fill=tk.X if result_type == 'SPECTATOR' else tk.NONE)
 
     # --- TIMER LOGIC ---
     def start_timer(self):
@@ -391,12 +402,13 @@ class GameView:
             room_id = message.get('room_id')
             players = message.get('players', [])
             
+            # QUAN TRỌNG: Reset state thành spectator (player_symbol = None)
+            self.controller.set_game_state(room_id, None, True)
+            
             # Setup UI cho Viewer
             self.game_status.config(text=f"Đang xem: {', '.join(players)}", fg=self.colors['text_dark'])
             self.player_label.config(text="Khán giả", fg='gray')
             self.turn_indicator.config(text="Đang theo dõi trận đấu", fg='gray')
-            # Set game_active để nhận update bàn cờ
-            self.controller.game_active = True
             
             # Ẩn nút chức năng
             pass
@@ -432,7 +444,11 @@ class GameView:
             self.turn_indicator.config(text="Kết thúc", fg='red')
             
             # HIỆN BẢNG KẾT QUẢ XỊN
-            if winner == self.controller.username:
+            is_spectator = self.controller.player_symbol is None
+            
+            if is_spectator:
+                self.show_result_overlay('SPECTATOR', winner)
+            elif winner == self.controller.username:
                 self.show_result_overlay('WIN')
             elif winner == 'Draw':
                 self.show_result_overlay('DRAW')

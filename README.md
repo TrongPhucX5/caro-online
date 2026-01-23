@@ -84,7 +84,7 @@ Mục tiêu của dự án là xây dựng một hệ thống game hoàn chỉnh
 3.  **Khởi động Client (Người chơi):**
     Mở một (hoặc nhiều) terminal mới và chạy:
     ```bash
-    python client/gui.py
+    python client/main.py
     ```
 
 ---
@@ -100,7 +100,7 @@ caro-online/
 ├── client/
 │   ├── main.py          # Entry point (nếu dùng)
 │   ├── network.py       # Class xử lý kết nối mạng (Gửi/Nhận JSON)
-│   └── gui.py           # Giao diện đồ họa chính (Tkinter, Lobby, Board)
+│   └── app.py           # Giao diện đồ họa chính (Tkinter, Lobby, Board)
 ├── shared/
 │   ├── protocol.py      # (Optional) Định nghĩa protocol
 │   ├── game.py          # (Optional) Logic game chung

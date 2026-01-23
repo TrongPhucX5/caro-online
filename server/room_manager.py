@@ -17,6 +17,8 @@ class RoomManager:
     def set_server(self, server):
         self.server_instance = server
 
+
+
     def _timeout_loop(self):
         """Luồng chạy ngầm kiểm tra hết giờ"""
         import time
@@ -84,6 +86,12 @@ class RoomManager:
         # --- THÊM: XỬ LÝ TÌM TRẬN NHANH ---
         elif msg_type == 'QUICK_MATCH':
             self.quick_match(client_id, server)
+            
+        elif msg_type == 'ACCEPT_MATCH':
+            self.accept_match(client_id, message.get('room_id'), server)
+            
+        elif msg_type == 'DECLINE_MATCH':
+            self.decline_match(client_id, message.get('room_id'), server)
         # ----------------------------------
             
         elif msg_type == 'GET_ROOMS':
@@ -97,28 +105,46 @@ class RoomManager:
             room_id = message.get('room_id')
             self.leave_room(client_id, room_id, server)
 
+
     # --- HÀM MỚI: TÌM TRẬN ---
     def quick_match(self, client_id, server):
         """Tìm phòng đang chờ có 1 người, nếu không có thì tạo mới"""
         found_room_id = None
         
-        # Duyệt tìm phòng phù hợp
+        # Duyệt tìm phòng phù hợp (Chỉ tìm phòng đang WAITING)
         with self.lock:
             for r_id, room in self.rooms.items():
-                if room['status'] == 'waiting' and len(room['players']) == 1 and not room.get('password'):
-                    # Đảm bảo không tự vào phòng mình vừa tạo (nếu logic client sai)
+                if room['status'] == 'waiting' and \
+                   len(room['players']) == 1 and \
+                   not room.get('password'):
+                
+                    # Đảm bảo không tự vào phòng mình vừa tạo
                     if client_id not in room['players']:
                         found_room_id = r_id
                         break
         
         if found_room_id:
-            # Tìm thấy -> Vào luôn
+            # Tìm thấy -> VÀO LUÔN (Bỏ xác nhận kép)
             self.join_room(client_id, found_room_id, server)
+            
         else:
             # Không thấy -> Tạo phòng mới
-            self.create_room(client_id, server)
+            # Truyền cờ is_quick_match=True để thông báo cho client biết mà đợi
+            self.create_room(client_id, server, is_quick_match=True)
+
+    def accept_match(self, client_id, room_id, server):
+        # Deprecated: No double confirmation anymore
+        pass
+
+    def decline_match(self, client_id, room_id, server):
+        # Deprecated: No double confirmation anymore
+        pass
+            })
             
-    def create_room(self, client_id, server, password=None, time_limit=30):
+            # Client B (pending_opp) cần reset trạng thái UI về searching? 
+            # Client A (owner) vẫn ở trong phòng waiting, cần reset UI ve waiting
+            
+    def create_room(self, client_id, server, password=None, time_limit=30, is_quick_match=False):
         room_id = f"room_{self.room_counter}"
         self.room_counter += 1
         
@@ -131,8 +157,9 @@ class RoomManager:
                 'owner': client_id,
                 'password': password,
                 'time_limit': time_limit,
-                'turn_deadline': None,  # Will be set when game starts
-                'spectators': []  # List of spectator client_ids
+                'turn_deadline': None, 
+                'spectators': [],
+                'match_pending': False # New flag
             }
             self.room_owners[room_id] = client_id
         
@@ -141,8 +168,13 @@ class RoomManager:
         if client:
             client['room_id'] = room_id
         
-        # Gửi thông báo tạo phòng
-        server.send_to_client(client_id, {'type': 'ROOM_CREATED', 'room_id': room_id, 'player_symbol': 'X'})
+        # Gửi thông báo tạo phòng kèm cờ is_quick_match
+        server.send_to_client(client_id, {
+            'type': 'ROOM_CREATED', 
+            'room_id': room_id, 
+            'player_symbol': 'X',
+            'is_quick_match': is_quick_match
+        })
 
         # Broadcast cập nhật danh sách
         self.broadcast_room_list(server)

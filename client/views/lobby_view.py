@@ -101,18 +101,18 @@ class LobbyView:
 
 
         # === CỘT PHẢI (NỘI DUNG) ===
-        content_area = tk.Frame(main_body, bg=self.colors['bg_main'], padx=25, pady=25)
-        content_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.content_area = tk.Frame(main_body, bg=self.colors['bg_main'], padx=25, pady=25)
+        self.content_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        tk.Label(content_area, text="Sảnh chờ game", 
+        tk.Label(self.content_area, text="Sảnh chờ game", 
                  font=("Segoe UI", 16, "bold"), 
                  bg=self.colors['bg_main'], fg=self.colors['text_dark']).pack(anchor='w', pady=(0, 15))
 
-        lists_container = tk.Frame(content_area, bg=self.colors['bg_main'])
-        lists_container.pack(fill=tk.BOTH, expand=True)
+        self.lists_container = tk.Frame(self.content_area, bg=self.colors['bg_main'])
+        self.lists_container.pack(fill=tk.BOTH, expand=True)
 
         # --- FIX LAYOUT: PACK CỘT PHẢI (PLAYER) TRƯỚC ---
-        player_wrapper = tk.Frame(lists_container, bg='white', width=220)
+        player_wrapper = tk.Frame(self.lists_container, bg='white', width=220)
         player_wrapper.config(highlightbackground=self.colors['border'], highlightthickness=1)
         player_wrapper.pack(side=tk.RIGHT, fill=tk.Y)
         player_wrapper.pack_propagate(False) # Cố định size
@@ -125,7 +125,7 @@ class LobbyView:
         self.player_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # --- SAU ĐÓ MỚI PACK CỘT TRÁI (ROOM) ---
-        room_wrapper = tk.Frame(lists_container, bg='white')
+        room_wrapper = tk.Frame(self.lists_container, bg='white')
         room_wrapper.config(highlightbackground=self.colors['border'], highlightthickness=1)
         room_wrapper.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15))
         
@@ -185,9 +185,191 @@ class LobbyView:
 
     # Button Commands
     def quick_match(self):
-        if hasattr(self.controller, 'find_match'): self.controller.find_match()
-        else: messagebox.showinfo("Info", "Chức năng đang phát triển")
-    
+        # Ẩn danh sách phòng/người chơi
+        self.lists_container.pack_forget()
+        
+        # Hiển thị UI tìm trận (nhúng trực tiếp)
+        self.search_frame = tk.Frame(self.content_area, bg='white', 
+                                     highlightbackground=self.colors['border'], highlightthickness=1)
+        self.search_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Center content
+        center_frame = tk.Frame(self.search_frame, bg='white')
+        center_frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        
+        tk.Label(center_frame, text="⌛", font=("Segoe UI", 40), bg='white', fg=self.colors['warning']).pack(pady=10)
+        tk.Label(center_frame, text="Đang tìm trận...", font=("Segoe UI", 16, "bold"), bg='white').pack(pady=(0, 5))
+        
+        self.lbl_search_status = tk.Label(center_frame, text="Đang tìm đối thủ phù hợp...", 
+                                        font=("Segoe UI", 10), bg='white', fg=self.colors['text_gray'])
+        self.lbl_search_status.pack(pady=5)
+        
+        # Animation Bar (giả lập)
+        canvas = tk.Canvas(center_frame, width=300, height=4, bg="#f3f4f6", bd=0, highlightthickness=0)
+        canvas.pack(pady=20)
+        bar = canvas.create_rectangle(0, 0, 0, 4, fill=self.colors['primary'], width=0)
+        
+        def animate_bar(w=0):
+            try:
+                # Kiểm tra frame và canvas còn tồn tại không trước khi vẽ
+                if hasattr(self, 'search_frame') and self.search_frame.winfo_exists() and canvas.winfo_exists():
+                    w += 5
+                    if w > 300: w = 0
+                    canvas.coords(bar, 0, 0, w, 4)
+                    self.search_frame.after(20, lambda: animate_bar(w))
+            except Exception:
+                pass # Bỏ qua lỗi nếu widget biến mất đột ngột
+        animate_bar()
+
+        # Nút Hủy
+        def cancel_search():
+            self.controller.pending_action = None # Reset cờ hành động
+            self.search_frame.destroy()
+            self.lists_container.pack(fill=tk.BOTH, expand=True)
+            
+        tk.Button(center_frame, text="❌ Hủy tìm kiếm", command=cancel_search, 
+                 bg="#ef4444", fg="white", font=("Segoe UI", 10, "bold"),
+                 relief=tk.FLAT, padx=20, pady=8, cursor="hand2").pack(pady=20)
+
+        # Gửi request sau 1.5s
+        self.frame.after(1500, lambda: self._send_quick_match_request())
+        
+    def _send_quick_match_request(self):
+        # Kiểm tra xem frame tìm kiếm còn tồn tại không (user chưa hủy)
+        if hasattr(self, 'search_frame') and self.search_frame.winfo_exists():
+            if hasattr(self.controller, 'find_match'):
+                self.controller.find_match()
+
+
+    def reset_search_ui(self):
+        """Hủy giao diện tìm kiếm và quay về sảnh chính (không tự tìm lại)"""
+        # Hủy timer (nếu có)
+        try:
+            if hasattr(self, 'search_frame'):
+                 self.search_frame.destroy()
+                 del self.search_frame
+        except: pass
+        
+        # Hiện lại danh sách phòng
+        try:
+            self.lists_container.pack(fill=tk.BOTH, expand=True)
+        except: pass
+
+        # Reset action pending
+        if hasattr(self.controller, 'pending_action'):
+             self.controller.pending_action = None
+        
+        # Reset current room locally if set
+        if self.controller.current_room:
+             self.controller.current_room = None
+
+    def _restore_searching_state(self):
+        if not (hasattr(self, 'search_frame') and self.search_frame.winfo_exists()): return
+        
+        for widget in self.search_frame.winfo_children(): widget.destroy()
+        
+        center_frame = tk.Frame(self.search_frame, bg='white')
+        center_frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        
+        tk.Label(center_frame, text="⌛", font=("Segoe UI", 40), bg='white', fg=self.colors['warning']).pack(pady=10)
+        tk.Label(center_frame, text="Đang tìm trận...", font=("Segoe UI", 16, "bold"), bg='white').pack(pady=(0, 5))
+        
+        # Gọi lại tìm trận (nếu người dùng là người tìm kiếm B)
+        # Nếu là người tạo phòng (A), họ vẫn ở trong phòng, chỉ cần đợi tiếp
+        # A doesn't need to call find_match again, server keeps A in waiting room
+        if self.controller.current_room is None:
+             self.controller.find_match()
+
+    def handle_match_found(self, message):
+        """Hiển thị thông báo tìm thấy trận và đếm ngược"""
+        # Đảm bảo hiển thị frame tìm kiếm/popup nếu chưa có
+        if not hasattr(self, 'search_frame') or not self.search_frame.winfo_exists():
+             self.lists_container.pack_forget()
+             self.search_frame = tk.Frame(self.content_area, bg='white', 
+                                         highlightbackground=self.colors['border'], highlightthickness=1)
+             self.search_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Xóa hết nội dung cũ
+        for widget in self.search_frame.winfo_children():
+            widget.destroy()
+            
+        opp_name = message.get('opponent_name', 'Unknown')
+        room_id = message.get('room_id')
+        timeout = message.get('timeout', 15)
+        
+        # Center content lại
+        center_frame = tk.Frame(self.search_frame, bg='white')
+        center_frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        
+        tk.Label(center_frame, text="✅", font=("Segoe UI", 40), bg='white', fg=self.colors['success']).pack(pady=10)
+        tk.Label(center_frame, text=f"Đã tìm thấy đối thủ:\n{opp_name}", 
+                    font=("Segoe UI", 14, "bold"), bg='white', wraplength=400, justify='center').pack(pady=(0, 5))
+        
+        tk.Label(center_frame, text="Bạn có muốn vào trận đấu này?", font=("Segoe UI", 12), bg='white').pack()
+        
+        # Timer Countdown
+        lbl_timer = tk.Label(center_frame, text=f"{timeout}s", font=("Segoe UI", 24, "bold"), bg='white', fg=self.colors['primary'])
+        lbl_timer.pack(pady=10)
+        
+        btn_frame = tk.Frame(center_frame, bg='white')
+        btn_frame.pack(pady=20)
+        
+        def on_decline():
+            if hasattr(self.controller, 'decline_match'):
+                self.controller.decline_match(room_id)
+            
+            # Xóa popup
+            self.search_frame.destroy()
+            self.lists_container.pack(fill=tk.BOTH, expand=True)
+
+            # Xử lý tùy theo trạng thái (người tìm hay chủ phòng)
+            if self.controller.pending_action == 'quick_match':
+                 self.controller.pending_action = None 
+                 # Nếu là Quick Matcher đang giữ room -> Rời phòng
+                 if self.controller.current_room:
+                      self.controller.network.send({'type': 'LEAVE_ROOM', 'room_id': self.controller.current_room})
+                      self.controller.current_room = None
+            else:
+                 # Nếu là Chủ phòng (Manual Create) -> Quay lại Game View đợi tiếp
+                 if self.controller.current_room:
+                      self.controller.show_view('game') 
+
+        def on_accept():
+            # Dùng accept_match thay vì join_room
+            if hasattr(self.controller, 'accept_match'):
+                self.controller.accept_match(room_id)
+            
+            # UI chuyển sang trạng thái "Đang đợi đối thủ..."
+            for widget in btn_frame.winfo_children(): 
+                if isinstance(widget, tk.Button): widget.config(state=tk.DISABLED)
+            
+            tk.Label(center_frame, text="Đang đợi đối thủ xác nhận...", fg="#6b7280", bg='white', font=("Segoe UI", 10, "italic")).pack(pady=10)
+
+        tk.Button(btn_frame, text="❌ Từ chối", command=on_decline,
+                    bg="#f3f4f6", fg=self.colors['text_dark'], font=("Segoe UI", 10, "bold"),
+                    relief=tk.FLAT, padx=15, pady=8, width=12, cursor="hand2").pack(side=tk.LEFT, padx=10)
+                    
+        tk.Button(btn_frame, text="✅ Vào Ngay", command=on_accept,
+                    bg=self.colors['success'], fg="white", font=("Segoe UI", 10, "bold"),
+                    relief=tk.FLAT, padx=15, pady=8, width=12, cursor="hand2").pack(side=tk.LEFT, padx=10)
+                    
+        # Logic đếm ngược
+        self.match_timer = timeout
+        def countdown():
+            if not self.search_frame.winfo_exists(): return
+            # Nếu đã chấp nhận (nút bị disable) thì không tự hủy nữa? Hay vẫn hủy?
+            # Thường thì nên giữ timer để timeout server xử lý. 
+            # Nhưng ở đây client đếm ngược để hiển thị thôi.
+            
+            self.match_timer -= 1
+            lbl_timer.config(text=f"{self.match_timer}s")
+            if self.match_timer > 0:
+                self.search_frame.after(1000, countdown)
+            else:
+                pass # Hết giờ, để server timeout handle
+        
+        self.search_frame.after(1000, countdown)
+            
     def logout_confirm(self):
         if messagebox.askyesno("Đăng xuất", "Bạn chắc chắn muốn thoát?"): self.controller.logout()
         
@@ -256,7 +438,15 @@ class LobbyView:
                  bg=self.colors['success'], fg='white', relief=tk.FLAT).pack(pady=20)
     def refresh_all_data(self): self.controller.refresh_all_data()
     
-    def show(self): 
+    def show(self):
+        # Reset UI về trạng thái mặc định (xóa UI tìm trận nếu có)
+        if hasattr(self, 'search_frame') and self.search_frame.winfo_exists():
+            self.search_frame.destroy()
+            self.lists_container.pack(fill=tk.BOTH, expand=True)
+            # Reset action nếu cần thiết
+            if hasattr(self.controller, 'pending_action'):
+                 self.controller.pending_action = None
+
         self.frame.pack(fill=tk.BOTH, expand=True)
         self.update_user_info()
     def hide(self): self.frame.pack_forget()

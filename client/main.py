@@ -144,9 +144,17 @@ class CaroClient:
                     self.show_view('login')
                 self.is_logging_out = False
 
-
             elif msg_type == 'LOGIN_SUCCESS':
                 self.on_login_success(message)
+
+            elif msg_type == 'MATCH_FOUND':
+                # Chỉ hiện confirm nếu đang tìm quick match
+                if self.pending_action == 'quick_match' and 'lobby' in self.views:
+                    self.views['lobby'].handle_match_found(message)
+                else:
+                    # Nếu không tìm nữa (đã hủy), từ chối ngầm?
+                    # Server chờ user accept. Nếu user không làm gì server tự timeout. an toàn.
+                    pass
 
             elif msg_type in ['ROOM_LIST', 'ONLINE_PLAYERS']:
                 if 'lobby' in self.views: self.views['lobby'].handle_message(message)
@@ -170,15 +178,7 @@ class CaroClient:
                     return # Dừng xử lý
                 # ---------------------------------
                 
-                if msg_type == 'ROOM_CREATED':
-                    # Nếu là Quick Match -> KHÔNG CHUYỂN MÀN HÌNH GAME
-                    is_quick = message.get('is_quick_match', False)
-                    if is_quick:
-                        self.current_room = message.get('room_id') # Nhưng vẫn lưu room_id
-                        # Vẫn giữ pending_action là 'quick_match'
-                        return 
-
-                # Reset pending action khi vào phòng thành công (cho join hoặc created thường)
+                # Reset pending action khi vào phòng thành công
                 if msg_type in ['ROOM_CREATED', 'ROOM_JOINED']:
                     self.pending_action = None
 
@@ -327,12 +327,6 @@ class CaroClient:
 
     def surrender(self):
         self.network.send({'type': 'SURRENDER', 'room_id': self.current_room})
-
-    def accept_match(self, room_id):
-        self.network.send({'type': 'ACCEPT_MATCH', 'room_id': room_id})
-
-    def decline_match(self, room_id):
-        self.network.send({'type': 'DECLINE_MATCH', 'room_id': room_id})
 
     def refresh_all_data(self):
         self.refresh_rooms()
